@@ -185,6 +185,8 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                     str(project_cwd),
                     str(scripts / "mailbox.py"),
                 ]
+                if getattr(args, "max_iters", None) is not None:
+                    relay_cmd.append(str(args.max_iters))
                 rv = subprocess.run(
                     build_split_argv(
                         wezterm_exe=wez,

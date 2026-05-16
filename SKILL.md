@@ -64,6 +64,8 @@ python <skill>\scripts\mailbox.py resume --root <root> --task-id <id>
 
 The mailbox stores Claude's pre-minted session id, Codex's discovered session id, WezTerm pane ids, and the immutable workspace name. Resume rebinds live panes or recreates missing panes when session ids are available. It does not automatically use `codex resume --last`.
 
+The repair command intentionally does not support `--use-last-codex-session` even with `--yes`; if you must fall back to the most recent Codex session, run `codex resume --last` manually inside a pane.
+
 ## MUST NOT
 
 Agents inside panes must not write directly to `agent-chat.sqlite` or artifact files. Use `mailbox post`.
