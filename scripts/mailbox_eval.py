@@ -55,8 +55,9 @@ def _get_pane_text(wezterm_exe: Path, pane_id: int) -> str:
     return rv.stdout or ""
 
 
-def _accept_trust_prompt(wezterm_exe: Path, pane_id: int, *, timeout_s: int = 45) -> bool:
+def _accept_trust_prompt(wezterm_exe: Path, pane_id: int, *, timeout_s: int = 12, no_prompt_grace_s: int = 3) -> bool:
     deadline = time.time() + timeout_s
+    no_prompt_deadline = time.time() + no_prompt_grace_s
     while time.time() < deadline:
         text = _get_pane_text(wezterm_exe, pane_id).lower()
         if "do you trust" in text or "yes, i trust" in text or "yes, continue" in text:
@@ -74,6 +75,8 @@ def _accept_trust_prompt(wezterm_exe: Path, pane_id: int, *, timeout_s: int = 45
                 if "do you trust" not in text and "yes, i trust" not in text and "yes, continue" not in text:
                     break
             return True
+        if text.strip() and time.time() >= no_prompt_deadline:
+            return False
         time.sleep(1)
     return False
 
