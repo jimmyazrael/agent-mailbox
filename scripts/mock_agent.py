@@ -1,30 +1,47 @@
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
+from agent_chat import connect_db, send_message
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Deterministic mock mailbox agent")
-    parser.add_argument("--agent", required=True)
-    parser.add_argument("--response-index", type=int, required=True)
-    parser.add_argument("--responses-file", type=Path, required=True)
-    parser.add_argument("--prompt-file", type=Path, required=True)
-    parser.add_argument("--output-last-message", type=Path, required=True)
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Post one mock agent message through agent_chat")
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--task-id", required=True)
+    parser.add_argument("--agent", choices=["claude", "codex"], required=True)
+    parser.add_argument("--peer", choices=["claude", "codex"], required=True)
+    parser.add_argument("--mode", choices=["continue", "final", "blocked"], default="continue")
+    parser.add_argument("--summary", default="mock response")
+    parser.add_argument("--body", default=None)
+    parser.add_argument("--blocked-reason", default=None)
+    parser.add_argument("--exit-after-post", action="store_true")
     args = parser.parse_args()
 
-    data = json.loads(args.responses_file.read_text(encoding="utf-8"))
-    responses = data.get(args.agent, [])
-    if args.response_index < len(responses):
-        output = responses[args.response_index]
-    else:
-        output = f"{args.agent} default mock response\n\nMAILBOX_STATUS: final"
-    args.output_last_message.parent.mkdir(parents=True, exist_ok=True)
-    args.output_last_message.write_text(output, encoding="utf-8", newline="\n")
-    print(json.dumps({"agent": args.agent, "response_index": args.response_index, "prompt_chars": len(args.prompt_file.read_text(encoding="utf-8"))}))
+    body = args.body
+    if body is None:
+        body = f"mock {args.agent} {args.mode} response"
+    conn = connect_db(args.root)
+    try:
+        send_message(
+            conn,
+            root=args.root,
+            room_id=args.task_id,
+            from_agent=args.agent,
+            to_agent=args.peer,
+            kind="message",
+            status=args.mode,
+            summary=args.summary,
+            body=body,
+            blocked_reason=args.blocked_reason,
+            next_turn=args.peer if args.mode == "continue" else None,
+        )
+    finally:
+        conn.close()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
-
+    raise SystemExit(main())

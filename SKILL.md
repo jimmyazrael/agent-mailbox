@@ -1,105 +1,77 @@
 ---
 name: agent-mailbox
-description: Coordinate autonomous or manual communication with another AI coding agent through shared mailbox files. Use when asked to start, continue, relay, monitor, or manage Codex/Claude Code agent-to-agent collaboration without copy-pasting messages.
+description: Coordinate Codex and Claude Code through a SQLite-backed mailbox with visible WezTerm TUI panes. Use when asked to start, continue, relay, monitor, recover, or manage agent-to-agent collaboration without copy-pasting messages.
 ---
 
 # Agent Mailbox
 
-Use this skill to coordinate two coding agents through a file-backed mailbox. The v1 implementation is relay-owned: `mailbox_relay.py` invokes each agent for one non-interactive turn, records the response, flips the turn, and repeats until `final`, `blocked`, `error`, or a configured limit.
+Use this skill for two-agent collaboration where Codex and Claude Code should discuss, review, or implement a task while the user keeps native TUI visibility and control.
 
 ## Quick Start
 
-Create a mailbox task:
+From the orchestrator session, start a task:
 
-```bash
-python scripts/init_mailbox.py --task-id my-task --goal "Review the implementation plan" --project-cwd "F:\Programs\LocalAgentConcept" --first-turn codex
+```powershell
+python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py start --prefix spc --label "phase 2 review" --goal "Review the design and converge on fixes" --project-cwd F:\Programs\LocalAgentConcept --first-turn codex
 ```
 
-Run an autonomous mock relay first:
+This opens a WezTerm workspace with Claude, Codex, and relay panes. The bootstrap session returns immediately; the panes are the live interface.
 
-```bash
-python scripts/mailbox_relay.py --task-id my-task --backend mock --mock-responses responses.json
+## Inside Agent Panes
+
+When triggered, the pane agent should:
+
+1. Read the latest mailbox state:
+
+```powershell
+python <skill>\scripts\mailbox.py show --root <root> --task-id <id> --tail 1 --body --format json
 ```
 
-Run the real relay only after mock behavior is correct:
+2. Decide whether a response is needed. If the previous response already covers the latest message, do not post again.
 
-```bash
-python scripts/mailbox_relay.py --task-id my-task --backend real
+3. Post via the CLI, never by editing `agent-chat.sqlite` directly:
+
+```powershell
+python <skill>\scripts\mailbox.py post --root <root> --task-id <id> --from codex --to claude --status continue --summary "review notes" --body-file F:\tmp\reply.md
 ```
 
-Inspect state and messages:
+Valid statuses are `continue`, `blocked`, `final`, and `error`. For `blocked`, also pass `--blocked-reason`.
 
-```bash
-python scripts/read_state.py --task-id my-task --latest 3
-python scripts/mailbox_tail.py --task-id my-task --follow
+## Observability And Control
+
+Use native Claude Code and Codex TUIs in WezTerm for progress, thinking, edits, approvals, interrupts, and steering.
+
+Useful control commands:
+
+```powershell
+python <skill>\scripts\mailbox.py status --root <root> --task-id <id>
+python <skill>\scripts\mailbox.py show --root <root> --task-id <id> --tail 5 --body
+python <skill>\scripts\mailbox.py list --root <root> --active-only
+python <skill>\scripts\mailbox.py inject --root <root> --task-id <id> --target next --content "New guidance"
+python <skill>\scripts\mailbox.py pause --root <root> --task-id <id>
+python <skill>\scripts\mailbox.py resume --root <root> --task-id <id>
+python <skill>\scripts\mailbox.py stop --root <root> --task-id <id>
+python <skill>\scripts\mailbox.py repair --root <root> --task-id <id> --rediscover-codex
 ```
 
-## Runtime Layout
+## Recovery After Crash Or Restart
 
-Default runtime root:
+Use:
 
-```text
-C:\Users\<user>\.agent-mailbox\
+```powershell
+python <skill>\scripts\mailbox.py resume --root <root> --task-id <id>
 ```
 
-Per-task files:
+The mailbox stores Claude's pre-minted session id, Codex's discovered session id, WezTerm pane ids, and the immutable workspace name. Resume rebinds live panes or recreates missing panes when session ids are available. It does not automatically use `codex resume --last`.
 
-```text
-<root>\index.md
-<root>\<task-id>\state.json
-<root>\<task-id>\messages.md
-<root>\<task-id>\relay.log
-```
+## MUST NOT
 
-Canonical skill source should live outside any project:
+Agents inside panes must not write directly to `agent-chat.sqlite` or artifact files. Use `mailbox post`.
 
-```text
-C:\Users\<user>\.agent-skills\agent-mailbox\
-```
+Agents must not modify other tasks' rooms or messages.
 
-After review, install copies to both agent skill directories:
+Agents must not call `codex resume --last` automatically.
 
-```bash
-python scripts/install.py
-```
+Agents must not bypass `tui_relay_state.paused` by manually triggering peers.
 
-## Protocol
-
-- The relay owns `~/.agent-mailbox`. Agents must not modify mailbox files directly.
-- Agents end every response with exactly one status marker:
-  - `MAILBOX_STATUS: continue`
-  - `MAILBOX_STATUS: blocked - <reason>`
-  - `MAILBOX_STATUS: final`
-- The relay parses only the current agent output. Markers inside peer-message blocks are ignored.
-- Peer content is wrapped as untrusted data in `<mailbox-peer-message>` with CDATA-safe escaping.
-- The relay enforces `max_rounds`, subprocess timeouts, and known cost/token limits where available.
-- Failures append an error message and stop with `state.status = "error"`.
-
-## Scripts
-
-- `scripts/init_mailbox.py`: initialize runtime files for a task.
-- `scripts/post_message.py`: append one manual message safely and update state.
-- `scripts/read_state.py`: print state and latest messages.
-- `scripts/mailbox_relay.py`: run the autonomous relay with `mock` or `real` backend.
-- `scripts/mailbox_tail.py`: tail `messages.md`.
-- `scripts/mock_agent.py`: deterministic fake agent for relay tests.
-- `scripts/install.py`: copy this skill to Claude Code and Codex skill folders.
-
-## Real Backend Requirements
-
-Codex command templates:
-
-```text
-codex exec --json --output-last-message <out-file> --full-auto <prompt>
-codex exec resume <thread_id> --output-last-message <out-file> --full-auto <prompt>
-```
-
-Claude command templates:
-
-```text
-claude -p --session-id <uuid> --output-format json --append-system-prompt <text> --permission-mode acceptEdits <prompt>
-claude -p -r <uuid> --output-format json --append-system-prompt <text> --permission-mode acceptEdits <prompt>
-```
-
-The relay sets subprocess `cwd` to `project_cwd` for both agents. It reads `system-append.md` and passes the text inline to Claude via `--append-system-prompt`.
-
+Markdown transcripts are export-only. Do not parse `transcript.md` back as state.

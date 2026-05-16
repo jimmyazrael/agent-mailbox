@@ -1,0 +1,134 @@
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+from agent_chat import connect_db, init_db
+
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+MAILBOX = SKILL_ROOT / "scripts" / "mailbox.py"
+
+
+def _run(*args, env=None):
+    return subprocess.run([sys.executable, str(MAILBOX), *args], capture_output=True, text=True, env=env)
+
+
+def test_init_creates_room_with_sessions(tmp_path):
+    root = tmp_path / "mb"
+    rv = _run(
+        "init",
+        "--root",
+        str(root),
+        "--prefix",
+        "spc",
+        "--label",
+        "Phase Test",
+        "--goal",
+        "Test wrapper",
+        "--project-cwd",
+        str(tmp_path),
+        "--format",
+        "json",
+    )
+    assert rv.returncode == 0, rv.stderr
+    out = json.loads(rv.stdout)
+    task_id = out["data"]["task_id"]
+    conn = connect_db(root)
+    assert conn.execute("SELECT id FROM rooms WHERE id=?", (task_id,)).fetchone() is not None
+    sessions = {row["agent"]: dict(row) for row in conn.execute("SELECT * FROM agent_sessions WHERE room_id=?", (task_id,))}
+    assert sessions["claude"]["session_id"]
+    assert sessions["codex"]["discovery_status"] == "pending"
+
+
+def test_post_show_ack_export_and_status(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    post = _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "claude",
+        "--to",
+        "codex",
+        "--status",
+        "continue",
+        "--summary",
+        "hello",
+        "--body",
+        "body",
+        "--format",
+        "json",
+    )
+    assert post.returncode == 0, post.stderr
+    show = _run("show", "--root", str(root), "--task-id", task_id, "--body", "--format", "json")
+    assert json.loads(show.stdout)["data"]["messages"][0]["body"] == "body"
+    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert json.loads(status.stdout)["data"]["turn"] == "codex"
+    export = _run("export", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert Path(json.loads(export.stdout)["data"]["path"]).exists()
+
+
+def test_launch_tui_fake_panes(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    env = dict(**__import__("os").environ, AGENT_MAILBOX_FAKE_PANE_IDS="11,12", AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"))
+    rv = _run("launch-tui", "--root", str(root), "--task-id", task_id, "--format", "json", env=env)
+    assert rv.returncode == 0, rv.stderr
+    data = json.loads(rv.stdout)["data"]
+    assert data["claude_pane_id"] == 11
+    conn = connect_db(root)
+    assert conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='relay'", (task_id,)).fetchone() is None
+
+
+def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
+    root = tmp_path / "mb"
+    env = dict(
+        **__import__("os").environ,
+        AGENT_MAILBOX_FAKE_PANE_IDS="21,22,23",
+        AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"),
+    )
+    rv = _run(
+        "start",
+        "--root",
+        str(root),
+        "--prefix",
+        "t",
+        "--goal",
+        "g",
+        "--project-cwd",
+        str(tmp_path),
+        "--max-iters",
+        "3",
+        "--format",
+        "json",
+        env=env,
+    )
+    assert rv.returncode == 0, rv.stderr
+    lines = [line for line in rv.stdout.splitlines() if line.strip()]
+    assert len(lines) == 1
+    task_id = json.loads(lines[0])["data"]["task_id"]
+    conn = connect_db(root)
+    relay = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='relay'", (task_id,)).fetchone()
+    assert relay["pane_id"] == 23
+
+
+def test_pause_stop_and_repair_rebind(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    assert _run("pause", "--root", str(root), "--task-id", task_id).returncode == 0
+    assert _run("repair", "--root", str(root), "--task-id", task_id, "--rebind-pane", "--agent", "claude", "--pane-id", "123").returncode == 0
+    assert _run("stop", "--root", str(root), "--task-id", task_id).returncode == 0
+    conn = connect_db(root)
+    assert conn.execute("SELECT status FROM rooms WHERE id=?", (task_id,)).fetchone()["status"] == "stopped"
+
+
+def test_list_initializes_empty_db(tmp_path):
+    rv = _run("list", "--root", str(tmp_path / "mb"), "--format", "json")
+    assert rv.returncode == 0
+    assert json.loads(rv.stdout)["data"]["rooms"] == []
