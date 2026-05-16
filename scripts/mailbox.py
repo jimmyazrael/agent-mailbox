@@ -633,6 +633,41 @@ def cmd_repair(args) -> int:
             )
             data["codex_discovery_status"] = discovery["status"]
             data["codex_session_id"] = discovery["session_id"]
+        if args.restart_agent:
+            agent = args.restart_agent
+            session = conn.execute(
+                "SELECT session_id FROM agent_sessions WHERE room_id=? AND agent=?",
+                (task_id, agent),
+            ).fetchone()
+            if not session or not session["session_id"]:
+                return _emit(args, ok=False, error=f"missing {agent} session_id")
+            pane = conn.execute(
+                "SELECT pane_id FROM panes WHERE room_id=? AND pane_role=?",
+                (task_id, agent),
+            ).fetchone()
+            if not pane or pane["pane_id"] is None:
+                return _emit(args, ok=False, error=f"no pane bound for {agent}; use --rebind-pane first")
+            from pane_control import build_send_text_argv
+            from tui_launcher import find_wezterm
+
+            cmd = (
+                f'claude --resume "{session["session_id"]}"'
+                if agent == "claude"
+                else f'codex resume "{session["session_id"]}"'
+            )
+            rv = subprocess.run(
+                build_send_text_argv(
+                    wezterm_exe=find_wezterm(),
+                    pane_id=int(pane["pane_id"]),
+                    text=cmd + "\r",
+                    no_paste=True,
+                ),
+                capture_output=True,
+                text=True,
+            )
+            if rv.returncode != 0:
+                return _emit(args, ok=False, error=f"failed to send restart command to {agent} pane: {rv.stderr.strip()}")
+            data["restarted_agent"] = agent
         if args.use_last_codex_session:
             if not args.yes:
                 return _emit(args, ok=False, error="--use-last-codex-session requires --yes")

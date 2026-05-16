@@ -128,6 +128,36 @@ def test_pause_stop_and_repair_rebind(tmp_path):
     assert conn.execute("SELECT status FROM rooms WHERE id=?", (task_id,)).fetchone()["status"] == "stopped"
 
 
+def test_repair_restart_agent_sends_resume_to_bound_pane(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    assert _run("repair", "--root", str(root), "--task-id", task_id, "--rebind-pane", "--agent", "codex", "--pane-id", "321").returncode == 0
+    conn = connect_db(root)
+    conn.execute("UPDATE agent_sessions SET session_id='codex-known', discovery_status='discovered' WHERE room_id=? AND agent='codex'", (task_id,))
+    conn.close()
+    calls = []
+    wez = tmp_path / "wezterm.exe"
+    wez.write_bytes(b"")
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: wez)
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(
+        ["repair", "--root", str(root), "--task-id", task_id, "--restart-agent", "codex", "--format", "json"]
+    )
+    assert mailbox_cli.cmd_repair(args) == 0
+    sent = " ".join(calls[0])
+    assert "send-text" in sent
+    assert "321" in sent
+    assert "codex resume" in sent
+
+
 def test_list_initializes_empty_db(tmp_path):
     rv = _run("list", "--root", str(tmp_path / "mb"), "--format", "json")
     assert rv.returncode == 0

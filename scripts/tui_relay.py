@@ -9,7 +9,8 @@ from typing import Optional
 
 from agent_chat import connect_db
 from mailbox_lib import TERMINAL_STATUSES, utc_now
-from pane_control import build_send_text_argv
+from pane_control import build_list_argv, build_send_text_argv
+from tui_launcher import lookup_pane, parse_wezterm_list
 
 
 def trigger_text(*, agent: str, peer: str, task_id: str) -> str:
@@ -34,6 +35,17 @@ def send_trigger(*, wezterm_exe: Path, pane_id: int, agent: str, peer: str, task
     return rv.returncode == 0
 
 
+def _pane_alive(wezterm_exe: Path, pane_id: int) -> bool:
+    rv = subprocess.run(build_list_argv(wezterm_exe=wezterm_exe), capture_output=True, text=True)
+    if rv.returncode != 0:
+        return False
+    try:
+        panes = parse_wezterm_list(rv.stdout)
+    except (ValueError, TypeError):
+        return False
+    return bool(lookup_pane(panes, pane_id=pane_id))
+
+
 def _peer_for_agent(conn, room_id: str, agent: str) -> str:
     rows = conn.execute("SELECT agent FROM participants WHERE room_id=? ORDER BY agent", (room_id,)).fetchall()
     peers = [row["agent"] for row in rows if row["agent"] != agent]
@@ -50,6 +62,10 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             return "missing_room"
         if room["status"] in TERMINAL_STATUSES:
             return "terminal"
+        if room["status"] == "blocked":
+            return "blocked"
+        if room["status"] not in ("waiting", "running"):
+            return "ignored"
         state = conn.execute("SELECT * FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
         if state and int(state["paused"] or 0):
             return "paused"
@@ -67,10 +83,18 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",
-                (f"panes_lost:{turn}", task_id),
+                (f"pane_id_missing:{turn}", task_id),
             )
             conn.execute("COMMIT")
             return "missing_pane"
+        if not _pane_alive(wezterm_exe, int(pane["pane_id"])):
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",
+                (f"panes_lost:{turn}", task_id),
+            )
+            conn.execute("COMMIT")
+            return "panes_lost"
         peer = _peer_for_agent(conn, task_id, turn)
         if not send_trigger(wezterm_exe=wezterm_exe, pane_id=int(pane["pane_id"]), agent=turn, peer=peer, task_id=task_id):
             conn.execute("BEGIN IMMEDIATE")
