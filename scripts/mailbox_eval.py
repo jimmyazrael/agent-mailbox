@@ -18,6 +18,7 @@ from agent_chat import connect_db, export_transcript_md
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 MAILBOX = SKILL_ROOT / "scripts" / "mailbox.py"
 SCENARIO_DIR = SKILL_ROOT / "eval" / "scenarios"
+ACTION_REDISCOVER_CODEX = "rediscover_codex_after_first_codex_turn"
 
 
 @dataclass
@@ -63,10 +64,74 @@ def _load_scenarios() -> list[dict[str, Any]]:
     return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(SCENARIO_DIR.glob("*.json"))]
 
 
+def _current_turn(root: Path, task_id: str) -> str | None:
+    conn = connect_db(root)
+    try:
+        row = conn.execute("SELECT turn FROM rooms WHERE id=?", (task_id,)).fetchone()
+        return row["turn"] if row else None
+    finally:
+        conn.close()
+
+
+def _last_message_from(root: Path, task_id: str, agent: str) -> int:
+    conn = connect_db(root)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE room_id=? AND from_agent=?",
+            (task_id, agent),
+        ).fetchone()
+        return int(row[0] if row else 0)
+    finally:
+        conn.close()
+
+
+def _send_extra_triggers(root: Path, task_id: str, count: int) -> str | None:
+    for _ in range(max(0, count)):
+        turn = _current_turn(root, task_id)
+        if not turn:
+            return "extra trigger skipped: no current turn"
+        rv = _run_mailbox(
+            "trigger",
+            "--root",
+            str(root),
+            "--task-id",
+            task_id,
+            "--agent",
+            turn,
+            "--format",
+            "json",
+        )
+        if rv.returncode != 0:
+            return f"extra trigger failed for {turn}: {rv.stderr or rv.stdout}"
+    return None
+
+
+def _run_action(root: Path, task_id: str, action: str) -> str | None:
+    if action != ACTION_REDISCOVER_CODEX:
+        return f"unknown action: {action}"
+    rv = _run_mailbox(
+        "repair",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--rediscover-codex",
+        "--format",
+        "json",
+    )
+    if rv.returncode != 0:
+        return f"action {action} failed: {rv.stderr or rv.stdout}"
+    return None
+
+
 def _poll_to_terminal(root: Path, task_id: str, timeout_s: int, scenario: dict[str, Any]) -> tuple[str, bool]:
     deadline = time.time() + timeout_s
     observed_blocked = False
     injected = False
+    extra_triggers_sent = False
+    actions_done: set[str] = set()
+    first_claude_seen = _last_message_from(root, task_id, "claude")
+    first_codex_seen = _last_message_from(root, task_id, "codex")
     while time.time() < deadline:
         conn = connect_db(root)
         try:
@@ -91,6 +156,16 @@ def _poll_to_terminal(root: Path, task_id: str, timeout_s: int, scenario: dict[s
                         "json",
                     )
                     if rv.returncode != 0:
+                        return "error", observed_blocked
+            if not extra_triggers_sent and int(scenario.get("extra_triggers", 0)) > 0:
+                if _last_message_from(root, task_id, "claude") > first_claude_seen or _last_message_from(root, task_id, "codex") > first_codex_seen:
+                    extra_triggers_sent = True
+                    if _send_extra_triggers(root, task_id, int(scenario["extra_triggers"])) is not None:
+                        return "error", observed_blocked
+            if ACTION_REDISCOVER_CODEX in scenario.get("actions", []) and ACTION_REDISCOVER_CODEX not in actions_done:
+                if _last_message_from(root, task_id, "codex") > first_codex_seen:
+                    actions_done.add(ACTION_REDISCOVER_CODEX)
+                    if _run_action(root, task_id, ACTION_REDISCOVER_CODEX) is not None:
                         return "error", observed_blocked
             if status in {"final", "error", "stopped"}:
                 return status, observed_blocked

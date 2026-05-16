@@ -3,6 +3,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import mailbox_eval
+from agent_chat import add_participant, connect_db, init_db, init_room, send_message, set_pane
+
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 MAILBOX_EVAL = SKILL_ROOT / "scripts" / "mailbox_eval.py"
 SCENARIOS = SKILL_ROOT / "eval" / "scenarios"
@@ -45,3 +48,42 @@ def test_mailbox_eval_initializes_scenario_without_real_agents():
     assert result["scenario_id"] == "AM-01"
     assert result["status"] == "defined"
     assert result["task_id"]
+
+
+def test_mailbox_eval_extra_trigger_targets_current_turn(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    init_db(root)
+    conn = connect_db(root)
+    init_room(conn, room_id="t1", name="T1", purpose="p", project_cwd=tmp_path, workspace="w", first_turn="claude")
+    add_participant(conn, "t1", "claude")
+    add_participant(conn, "t1", "codex")
+    set_pane(conn, "t1", "claude", pane_id=11)
+    set_pane(conn, "t1", "codex", pane_id=12)
+    send_message(conn, root=root, room_id="t1", from_agent="claude", to_agent="codex", kind="message", status="continue", summary="go", body="body")
+    conn.close()
+    calls = []
+
+    def fake_run_mailbox(*args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, '{"ok": true}', "")
+
+    monkeypatch.setattr(mailbox_eval, "_run_mailbox", fake_run_mailbox)
+    assert mailbox_eval._send_extra_triggers(root, "t1", 2) is None
+    assert calls == [
+        ("trigger", "--root", str(root), "--task-id", "t1", "--agent", "codex", "--format", "json"),
+        ("trigger", "--root", str(root), "--task-id", "t1", "--agent", "codex", "--format", "json"),
+    ]
+
+
+def test_mailbox_eval_rediscover_action_calls_repair(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run_mailbox(*args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, '{"ok": true}', "")
+
+    monkeypatch.setattr(mailbox_eval, "_run_mailbox", fake_run_mailbox)
+    assert mailbox_eval._run_action(tmp_path / "mb", "t1", mailbox_eval.ACTION_REDISCOVER_CODEX) is None
+    assert calls == [
+        ("repair", "--root", str(tmp_path / "mb"), "--task-id", "t1", "--rediscover-codex", "--format", "json")
+    ]

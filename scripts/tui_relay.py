@@ -102,6 +102,7 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
         if not turn:
             return "no_turn"
         last_message_id = int(room["last_message_id"])
+        first_turn = int(room["round"]) == 0
         if state and state["last_triggered_turn"] == turn and int(state["last_triggered_message_id"]) == last_message_id:
             return "idle"
         pane = conn.execute(
@@ -132,7 +133,7 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             peer=peer,
             task_id=task_id,
             root=root,
-            first_turn=last_message_id == 0,
+            first_turn=first_turn,
         ):
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(

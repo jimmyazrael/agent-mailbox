@@ -37,6 +37,28 @@ def test_run_once_first_turn_trigger_includes_first_turn_flag(monkeypatch, tmp_p
     assert calls[0]["first_turn"] is True
 
 
+def test_run_once_first_turn_flag_after_context_bootstrap(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    send_message(
+        conn,
+        root=tmp_path,
+        room_id="t1",
+        from_agent="user",
+        to_agent="broadcast",
+        kind="system",
+        status="continue",
+        summary="bootstrap context",
+        body="read this before starting",
+        next_turn="claude",
+        increment_round=False,
+    )
+    calls = []
+    monkeypatch.setattr("tui_relay.send_trigger", lambda **kwargs: calls.append(kwargs) or True)
+    monkeypatch.setattr("tui_relay._pane_alive", lambda *args, **kwargs: True)
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert calls[0]["first_turn"] is True
+
+
 def test_trigger_text_includes_literal_discovery_marker(tmp_path):
     text = trigger_text(agent="codex", peer="claude", task_id="t1", root=tmp_path)
     assert "AGENT_MAILBOX_TASK_ID=t1" in text

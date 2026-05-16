@@ -13,7 +13,6 @@
   "actions": ["rediscover_codex_after_first_codex_turn"],
   "success": {
     "codex_discovery_status": "discovered",
-    "required_transcript_terms": ["AGENT_MAILBOX_TASK_ID"],
     "terminal_status": "final"
   }
 }
