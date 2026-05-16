@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_chat import connect_db, export_transcript_md
+from pane_control import build_get_text_argv, build_send_text_argv, build_split_argv
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 MAILBOX = SKILL_ROOT / "scripts" / "mailbox.py"
@@ -40,6 +41,56 @@ def _run_mailbox(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[
         errors="replace",
         timeout=timeout,
     )
+
+
+def _get_pane_text(wezterm_exe: Path, pane_id: int) -> str:
+    rv = subprocess.run(
+        build_get_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, start_line=-80),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    return rv.stdout or ""
+
+
+def _accept_trust_prompt(wezterm_exe: Path, pane_id: int, *, timeout_s: int = 45) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        text = _get_pane_text(wezterm_exe, pane_id).lower()
+        if "do you trust" in text or "yes, i trust" in text or "yes, continue" in text:
+            for _ in range(2):
+                subprocess.run(
+                    build_send_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, text="1\r", no_paste=True),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=10,
+                )
+                time.sleep(3)
+                text = _get_pane_text(wezterm_exe, pane_id).lower()
+                if "do you trust" not in text and "yes, i trust" not in text and "yes, continue" not in text:
+                    break
+            return True
+        time.sleep(1)
+    return False
+
+
+def _approve_if_prompted(wezterm_exe: Path, pane_id: int) -> bool:
+    text = _get_pane_text(wezterm_exe, pane_id).lower()
+    if "this command requires approval" not in text and "do you want to proceed" not in text:
+        return False
+    subprocess.run(
+        build_send_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, text="1\r", no_paste=True),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    return True
 
 
 def _write_workspace(project: Path, files: dict[str, str]) -> dict[str, str]:
@@ -124,7 +175,15 @@ def _run_action(root: Path, task_id: str, action: str) -> str | None:
     return None
 
 
-def _poll_to_terminal(root: Path, task_id: str, timeout_s: int, scenario: dict[str, Any]) -> tuple[str, bool]:
+def _poll_to_terminal(
+    root: Path,
+    task_id: str,
+    timeout_s: int,
+    scenario: dict[str, Any],
+    *,
+    wezterm_exe: Path | None = None,
+    pane_ids: list[int] | None = None,
+) -> tuple[str, bool]:
     deadline = time.time() + timeout_s
     observed_blocked = False
     injected = False
@@ -171,8 +230,92 @@ def _poll_to_terminal(root: Path, task_id: str, timeout_s: int, scenario: dict[s
                 return status, observed_blocked
         finally:
             conn.close()
+        if wezterm_exe is not None and pane_ids:
+            for pane_id in pane_ids:
+                _approve_if_prompted(wezterm_exe, pane_id)
         time.sleep(5)
     return "timeout", observed_blocked
+
+
+def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any], context_path: Path) -> tuple[str, dict[str, Any], Path]:
+    init_args = [
+        "init",
+        "--root",
+        str(mailbox_root),
+        "--prefix",
+        scenario["id"].lower(),
+        "--label",
+        scenario["name"],
+        "--goal",
+        scenario["goal"],
+        "--project-cwd",
+        str(project),
+        "--first-turn",
+        scenario.get("first_turn", "claude"),
+        "--context-file",
+        str(context_path),
+        "--format",
+        "json",
+    ]
+    rv = _run_mailbox(*init_args, timeout=120)
+    if rv.returncode != 0:
+        raise RuntimeError(rv.stderr or rv.stdout)
+    task_id = json.loads(rv.stdout)["data"]["task_id"]
+
+    launch_rv = _run_mailbox("launch-tui", "--root", str(mailbox_root), "--task-id", task_id, "--format", "json", timeout=120)
+    if launch_rv.returncode != 0:
+        raise RuntimeError(launch_rv.stderr or launch_rv.stdout)
+    launch = json.loads(launch_rv.stdout)["data"]
+
+    from tui_launcher import find_wezterm
+
+    wezterm_exe = find_wezterm()
+    for pane_key in ("claude_pane_id", "codex_pane_id"):
+        # Fresh temp workspaces usually prompt for trust. Already-trusted
+        # environments do not, so this is best-effort rather than required.
+        _accept_trust_prompt(wezterm_exe, int(launch[pane_key]))
+
+    relay_cmd = [
+        "cmd",
+        "/c",
+        str(SKILL_ROOT / "scripts" / "launch_relay_pane.cmd"),
+        task_id,
+        str(mailbox_root),
+        str(project),
+        str(MAILBOX),
+        "60",
+    ]
+    relay_rv = subprocess.run(
+        build_split_argv(
+            wezterm_exe=wezterm_exe,
+            source_pane_id=int(launch["codex_pane_id"]),
+            direction="bottom",
+            percent=25,
+            cwd=project,
+            cmd=relay_cmd,
+        ),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+    )
+    if relay_rv.returncode != 0:
+        raise RuntimeError(relay_rv.stderr or relay_rv.stdout)
+    if relay_rv.stdout.strip().isdigit():
+        _run_mailbox(
+            "repair",
+            "--root",
+            str(mailbox_root),
+            "--task-id",
+            task_id,
+            "--rebind-pane",
+            "--agent",
+            "relay",
+            "--pane-id",
+            relay_rv.stdout.strip(),
+        )
+    return task_id, launch, wezterm_exe
 
 
 def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: bool = False) -> ScenarioResult:
@@ -187,7 +330,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
     task_id: str | None = None
     try:
         start_args = [
-            "start" if launch_real else "init",
+            "init",
             "--root",
             str(mailbox_root),
             "--prefix",
@@ -206,14 +349,25 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             "json",
         ]
         if launch_real:
-            start_args.extend(["--max-iters", "60"])
-        rv = _run_mailbox(*start_args, timeout=120)
-        if rv.returncode != 0:
-            return ScenarioResult(scenario["id"], scenario["name"], "error", [rv.stderr or rv.stdout], str(work_root), task_id)
-        task_id = json.loads(rv.stdout)["data"]["task_id"]
+            try:
+                task_id, launch, wezterm_exe = _start_real_task(mailbox_root, project, scenario, context_path)
+            except Exception as exc:
+                return ScenarioResult(scenario["id"], scenario["name"], "error", [str(exc)], str(work_root), task_id)
+        else:
+            rv = _run_mailbox(*start_args, timeout=120)
+            if rv.returncode != 0:
+                return ScenarioResult(scenario["id"], scenario["name"], "error", [rv.stderr or rv.stdout], str(work_root), task_id)
+            task_id = json.loads(rv.stdout)["data"]["task_id"]
         if not launch_real:
             return ScenarioResult(scenario["id"], scenario["name"], "defined", ["scenario initialized only; pass --run-real to execute"], str(work_root), task_id)
-        terminal, observed_blocked = _poll_to_terminal(mailbox_root, task_id, int(scenario.get("timeout_seconds", 420)), scenario)
+        terminal, observed_blocked = _poll_to_terminal(
+            mailbox_root,
+            task_id,
+            int(scenario.get("timeout_seconds", 420)),
+            scenario,
+            wezterm_exe=wezterm_exe,
+            pane_ids=[int(launch["claude_pane_id"]), int(launch["codex_pane_id"])],
+        )
         if terminal != scenario.get("success", {}).get("terminal_status", "final"):
             return ScenarioResult(scenario["id"], scenario["name"], "fail", [f"terminal status {terminal!r}"], str(work_root), task_id)
         conn = connect_db(mailbox_root)
