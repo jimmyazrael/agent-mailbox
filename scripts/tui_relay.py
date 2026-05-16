@@ -13,30 +13,58 @@ from pane_control import build_list_argv, build_send_text_argv
 from tui_launcher import lookup_pane, parse_wezterm_list
 
 
-def trigger_text(*, agent: str, peer: str, task_id: str) -> str:
+def trigger_text(*, agent: str, peer: str, task_id: str, root: Path, first_turn: bool = False) -> str:
+    lead = (
+        f"You have the first turn on agent-mailbox task {task_id}."
+        if first_turn
+        else f"{peer.capitalize()} has replied on agent-mailbox task {task_id}."
+    )
+    mailbox_py = Path(__file__).resolve().parent / "mailbox.py"
     return (
-        f"{peer} has replied in agent-mailbox task {task_id}. "
-        f"Read the mailbox, respond if needed, and post via mailbox.py. "
-        f"If your prior response already covers the latest message, do not post again.\r"
+        f"{lead} "
+        f"Read the latest mailbox state with: python \"{mailbox_py}\" show --root \"{root}\" --task-id \"{task_id}\" --tail 1 --body --format json. "
+        f"Then post via: python \"{mailbox_py}\" post --root \"{root}\" --task-id \"{task_id}\" --from {agent} --to {peer} --status continue --summary \"...\" --body \"...\". "
+        f"If you already responded to that message, do nothing.\r"
     )
 
 
-def send_trigger(*, wezterm_exe: Path, pane_id: int, agent: str, peer: str, task_id: str) -> bool:
-    rv = subprocess.run(
+def send_trigger(*, wezterm_exe: Path, pane_id: int, agent: str, peer: str, task_id: str, root: Path, first_turn: bool = False) -> bool:
+    text = trigger_text(agent=agent, peer=peer, task_id=task_id, root=root, first_turn=first_turn)
+    # Real Claude/Codex TUIs may accept the text but ignore a trailing CR in the
+    # same send-text call. Send Enter separately; this validated U1 on Windows.
+    rv_text = subprocess.run(
         build_send_text_argv(
             wezterm_exe=wezterm_exe,
             pane_id=pane_id,
-            text=trigger_text(agent=agent, peer=peer, task_id=task_id),
+            text=text.rstrip("\r"),
             no_paste=True,
         ),
         capture_output=True,
         text=True,
     )
-    return rv.returncode == 0
+    if rv_text.returncode != 0:
+        return False
+    rv_enter = subprocess.run(
+        build_send_text_argv(
+            wezterm_exe=wezterm_exe,
+            pane_id=pane_id,
+            text="\r",
+            no_paste=True,
+        ),
+        capture_output=True,
+        text=True,
+    )
+    return rv_enter.returncode == 0
 
 
 def _pane_alive(wezterm_exe: Path, pane_id: int) -> bool:
-    rv = subprocess.run(build_list_argv(wezterm_exe=wezterm_exe), capture_output=True, text=True)
+    rv = subprocess.run(
+        build_list_argv(wezterm_exe=wezterm_exe),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if rv.returncode != 0:
         return False
     try:
@@ -96,7 +124,15 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             conn.execute("COMMIT")
             return "panes_lost"
         peer = _peer_for_agent(conn, task_id, turn)
-        if not send_trigger(wezterm_exe=wezterm_exe, pane_id=int(pane["pane_id"]), agent=turn, peer=peer, task_id=task_id):
+        if not send_trigger(
+            wezterm_exe=wezterm_exe,
+            pane_id=int(pane["pane_id"]),
+            agent=turn,
+            peer=peer,
+            task_id=task_id,
+            root=root,
+            first_turn=last_message_id == 0,
+        ):
             conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",

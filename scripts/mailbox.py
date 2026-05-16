@@ -222,13 +222,6 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             scanned_files=discovery["scanned_files"],
             attempted_at=discovery["attempted_at"],
         )
-        if discovery["status"] != "discovered":
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "UPDATE tui_relay_state SET paused=1, pause_reason='codex_session_id_not_discovered' WHERE room_id=?",
-                (task_id,),
-            )
-            conn.execute("COMMIT")
         return {
             "task_id": task_id,
             "workspace": workspace,
@@ -292,7 +285,7 @@ def cmd_trigger(args) -> int:
     from tui_launcher import find_wezterm
     from tui_relay import send_trigger
 
-    ok = send_trigger(wezterm_exe=find_wezterm(), pane_id=int(pane["pane_id"]), agent=args.agent, peer=peer, task_id=task_id)
+    ok = send_trigger(wezterm_exe=find_wezterm(), pane_id=int(pane["pane_id"]), agent=args.agent, peer=peer, task_id=task_id, root=root)
     return _emit(args, ok=ok, data={"task_id": task_id, "agent": args.agent}, error=None if ok else "send-text failed")
 
 
@@ -481,7 +474,13 @@ def cmd_resume(args) -> int:
         from pane_control import build_list_argv, build_spawn_argv, build_split_argv
 
         wez = find_wezterm()
-        rv = subprocess.run(build_list_argv(wezterm_exe=wez), capture_output=True, text=True)
+        rv = subprocess.run(
+            build_list_argv(wezterm_exe=wez),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
         live = parse_wezterm_list(rv.stdout) if rv.returncode == 0 else []
         live_ids = {int(pane["pane_id"]) for pane in live}
         workspace_alive = any(pane.get("workspace") == room["workspace"] for pane in live)

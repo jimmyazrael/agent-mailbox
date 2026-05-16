@@ -24,6 +24,17 @@ def test_run_once_triggers_only_once(monkeypatch, tmp_path):
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "idle"
     assert len(calls) == 1
+    assert calls[0]["root"] == tmp_path
+    assert calls[0]["first_turn"] is False
+
+
+def test_run_once_first_turn_trigger_includes_first_turn_flag(monkeypatch, tmp_path):
+    _seed(tmp_path)
+    calls = []
+    monkeypatch.setattr("tui_relay.send_trigger", lambda **kwargs: calls.append(kwargs) or True)
+    monkeypatch.setattr("tui_relay._pane_alive", lambda *args, **kwargs: True)
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert calls[0]["first_turn"] is True
 
 
 def test_run_once_pauses_when_pane_missing(tmp_path):

@@ -30,7 +30,7 @@ def find_wezterm() -> Path:
 
 def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
     list_argv = build_list_argv(wezterm_exe=wezterm_exe)
-    rv = subprocess.run(list_argv, capture_output=True, text=True)
+    rv = subprocess.run(list_argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if rv.returncode == 0:
         return
     mux_exe = wezterm_exe.parent / ("wezterm-mux-server.exe" if os.name == "nt" else "wezterm-mux-server")
@@ -54,7 +54,7 @@ def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
         )
     deadline = time.time() + max_wait_s
     while time.time() < deadline:
-        rv = subprocess.run(list_argv, capture_output=True, text=True)
+        rv = subprocess.run(list_argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if rv.returncode == 0:
             return
         time.sleep(0.25)
@@ -88,7 +88,13 @@ def _parse_pane_id(stdout: str) -> Optional[int]:
 
 
 def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
-    rv = subprocess.run(build_list_argv(wezterm_exe=wezterm_exe), capture_output=True, text=True)
+    rv = subprocess.run(
+        build_list_argv(wezterm_exe=wezterm_exe),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     rv.check_returncode()
     return [int(pane["pane_id"]) for pane in lookup_pane(parse_wezterm_list(rv.stdout), workspace=workspace)]
 

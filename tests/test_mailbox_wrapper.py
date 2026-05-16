@@ -83,6 +83,9 @@ def test_launch_tui_fake_panes(monkeypatch, tmp_path):
     assert data["claude_pane_id"] == 11
     conn = connect_db(root)
     assert conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='relay'", (task_id,)).fetchone() is None
+    relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
+    assert relay["paused"] == 0
+    assert relay["pause_reason"] is None
 
 
 def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
