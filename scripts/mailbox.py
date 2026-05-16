@@ -111,6 +111,23 @@ def _init_task(args, root: Path) -> dict[str, Any]:
             "usage",
             {"known_cost_usd": 0.0, "codex_input_tokens": 0, "codex_output_tokens": 0},
         )
+        context = args.context or ""
+        if args.context_file:
+            context = args.context_file.read_text(encoding="utf-8")
+        if context:
+            send_message(
+                conn,
+                root=root,
+                room_id=task_id,
+                from_agent="user",
+                to_agent="broadcast",
+                kind="system",
+                status="continue",
+                summary="bootstrap context",
+                body=context,
+                next_turn=args.first_turn,
+                increment_round=False,
+            )
     finally:
         conn.close()
     return {"task_id": task_id, "workspace": workspace, "claude_session_id": claude_uuid, "root": str(root)}
@@ -694,6 +711,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--parent-task-id")
     p.add_argument("--exit-condition")
     p.add_argument("--max-rounds", type=int, default=30)
+    p.add_argument("--context")
+    p.add_argument("--context-file", type=Path)
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("start")
@@ -709,6 +728,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--exit-condition")
     p.add_argument("--max-rounds", type=int, default=30)
     p.add_argument("--max-iters", type=int)
+    p.add_argument("--context")
+    p.add_argument("--context-file", type=Path)
     p.set_defaults(func=cmd_start)
 
     for name, func in [("launch-tui", cmd_launch_tui), ("tui-relay", cmd_tui_relay), ("trigger", cmd_trigger)]:

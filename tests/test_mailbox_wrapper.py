@@ -40,6 +40,38 @@ def test_init_creates_room_with_sessions(tmp_path):
     assert sessions["codex"]["discovery_status"] == "pending"
 
 
+def test_init_context_file_creates_bootstrap_context_message(tmp_path):
+    root = tmp_path / "mb"
+    context = tmp_path / "context.md"
+    context.write_text("Scope: inspect README first.\nDone: post final only after peer review.\n", encoding="utf-8")
+    rv = _run(
+        "init",
+        "--root",
+        str(root),
+        "--prefix",
+        "ctx",
+        "--goal",
+        "Use context",
+        "--project-cwd",
+        str(tmp_path),
+        "--context-file",
+        str(context),
+        "--format",
+        "json",
+    )
+    assert rv.returncode == 0, rv.stderr
+    task_id = json.loads(rv.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    room = conn.execute("SELECT turn, round, last_message_id FROM rooms WHERE id=?", (task_id,)).fetchone()
+    msg = conn.execute("SELECT * FROM messages WHERE room_id=?", (task_id,)).fetchone()
+    assert dict(room) == {"turn": "claude", "round": 0, "last_message_id": 1}
+    assert msg["from_agent"] == "user"
+    assert msg["to_agent"] == "broadcast"
+    assert msg["kind"] == "system"
+    assert msg["summary"] == "bootstrap context"
+    assert "inspect README first" in msg["body_text"]
+
+
 def test_post_show_ack_export_and_status(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")

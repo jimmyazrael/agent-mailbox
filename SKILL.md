@@ -12,10 +12,12 @@ Use this skill for two-agent collaboration where Codex and Claude Code should di
 From the orchestrator session, start a task:
 
 ```powershell
-python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py start --prefix spc --label "phase 2 review" --goal "Review the design and converge on fixes" --project-cwd F:\Programs\LocalAgentConcept --first-turn codex
+python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py start --prefix spc --label "phase 2 review" --goal "Review the design and converge on fixes" --project-cwd F:\Programs\LocalAgentConcept --first-turn codex --context-file F:\tmp\spc-context.md
 ```
 
 This opens a WezTerm workspace with Claude, Codex, and relay panes. The bootstrap session returns immediately; the panes are the live interface.
+
+Use `--context-file` or `--context` for serious tasks. The context should state scope, relevant files, constraints, done criteria, and what must not be touched. It is stored as a bootstrap mailbox message so fresh TUI sessions do not have to infer project background from scratch.
 
 ## Inside Agent Panes
 
@@ -77,3 +79,15 @@ Agents must not call `codex resume --last` automatically.
 Agents must not bypass `tui_relay_state.paused` by manually triggering peers.
 
 Markdown transcripts are export-only. Do not parse `transcript.md` back as state.
+
+## Behavioral Evaluation
+
+Before using this skill on important work, prefer hard real-agent scenarios over mocks:
+
+```powershell
+python <skill>\scripts\mailbox_eval.py --scenario AM-01
+$env:AGENT_MAILBOX_RUN_REAL_SMOKE = "1"
+python <skill>\scripts\mailbox_eval.py --scenario AM-01 --run-real --keep
+```
+
+Scenario definitions live under `eval/scenarios`. They should be adversarial and designed to expose failures: context loss, approval friction, blocked-state handling, duplicate triggers, rediscovery, and context overload.
