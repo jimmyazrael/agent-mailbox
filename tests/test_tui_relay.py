@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from agent_chat import add_participant, connect_db, init_db, init_room, send_message, set_pane
-from tui_relay import run_once
+from tui_relay import run_once, trigger_text
 
 
 def _seed(root: Path):
@@ -35,6 +35,13 @@ def test_run_once_first_turn_trigger_includes_first_turn_flag(monkeypatch, tmp_p
     monkeypatch.setattr("tui_relay._pane_alive", lambda *args, **kwargs: True)
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
     assert calls[0]["first_turn"] is True
+
+
+def test_trigger_text_includes_literal_discovery_marker(tmp_path):
+    text = trigger_text(agent="codex", peer="claude", task_id="t1", root=tmp_path)
+    assert "AGENT_MAILBOX_TASK_ID=t1" in text
+    assert "--root" in text
+    assert "--task-id \"t1\"" in text
 
 
 def test_run_once_pauses_when_pane_missing(tmp_path):

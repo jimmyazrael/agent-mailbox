@@ -22,6 +22,7 @@ def trigger_text(*, agent: str, peer: str, task_id: str, root: Path, first_turn:
     mailbox_py = Path(__file__).resolve().parent / "mailbox.py"
     return (
         f"{lead} "
+        f"Discovery marker: AGENT_MAILBOX_TASK_ID={task_id}. "
         f"Read the latest mailbox state with: python \"{mailbox_py}\" show --root \"{root}\" --task-id \"{task_id}\" --tail 1 --body --format json. "
         f"Then post via: python \"{mailbox_py}\" post --root \"{root}\" --task-id \"{task_id}\" --from {agent} --to {peer} --status continue --summary \"...\" --body \"...\". "
         f"If you already responded to that message, do nothing.\r"
