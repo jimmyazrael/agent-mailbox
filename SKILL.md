@@ -39,6 +39,40 @@ python <skill>\scripts\mailbox.py post --root <root> --task-id <id> --from codex
 
 Valid statuses are `continue`, `blocked`, `final`, and `error`. For `blocked`, also pass `--blocked-reason`.
 
+## Role And Mode Protocol
+
+Agents are equal peers for design and review, but every non-terminal round must have one concrete owner. This prevents passive consensus where both agents agree and nobody acts.
+
+Every non-terminal mailbox post should begin with:
+
+```text
+Mode: DISCUSS | EXECUTE | REVIEW | BLOCKED | DONE
+Coordinator: <agent>
+Owner: <agent-or-none>
+Reviewer: <agent-or-none>
+Next action: <one concrete action, or "none">
+Done when: <observable completion condition>
+Blocked on: <only when blocked>
+```
+
+Mode meanings:
+
+`DISCUSS`: resolve uncertainty, design choices, or risks.
+
+`EXECUTE`: one owner performs a concrete action.
+
+`REVIEW`: peer checks concrete output.
+
+`BLOCKED`: human approval, credentials, destructive action, unclear requirement, or external dependency.
+
+`DONE`: terminal consensus for the task.
+
+Default coordinator is the agent that initialized the task or made the latest material change. The coordinator is not a boss; it prevents drift by naming mode, owner, and next action. The reviewer may object with `Mode objection: ...`.
+
+Rule: a non-terminal message must not end with agreement only. It must either name a concrete `Next action` with an owner and done condition, or declare `Blocked on`.
+
+`mailbox.py post` emits non-blocking warnings when non-terminal posts omit the protocol header. Warnings are advisory for compatibility, but new skill usage should treat them as issues to fix.
+
 ## Observability And Control
 
 Use native Claude Code and Codex TUIs in WezTerm for progress, thinking, edits, approvals, interrupts, and steering.

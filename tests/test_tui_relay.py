@@ -64,6 +64,7 @@ def test_trigger_text_includes_literal_discovery_marker(tmp_path):
     assert "AGENT_MAILBOX_TASK_ID=t1" in text
     assert "--root" in text
     assert "--task-id \"t1\"" in text
+    assert "Mode, Coordinator, Owner, Reviewer, Next action, Done when" in text
 
 
 def test_run_once_pauses_when_pane_missing(tmp_path):

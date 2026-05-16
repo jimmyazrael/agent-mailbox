@@ -104,6 +104,74 @@ def test_post_show_ack_export_and_status(tmp_path):
     assert Path(json.loads(export.stdout)["data"]["path"]).exists()
 
 
+def test_post_warns_when_non_terminal_protocol_header_missing(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    post = _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "claude",
+        "--to",
+        "codex",
+        "--status",
+        "continue",
+        "--summary",
+        "agree",
+        "--body",
+        "I agree we should run it.",
+        "--format",
+        "json",
+    )
+    assert post.returncode == 0, post.stderr
+    warnings = json.loads(post.stdout)["data"]["warnings"]
+    assert "missing protocol header: Mode" in warnings
+    assert "non-terminal posts must name a concrete Next action or Blocked on" in warnings
+
+
+def test_post_accepts_role_mode_protocol_header(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    body = "\n".join(
+        [
+            "Mode: EXECUTE",
+            "Coordinator: claude",
+            "Owner: claude",
+            "Reviewer: codex",
+            "Next action: run AM-01",
+            "Done when: result JSON is posted",
+            "",
+            "I will run it now.",
+        ]
+    )
+    post = _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "claude",
+        "--to",
+        "codex",
+        "--status",
+        "continue",
+        "--summary",
+        "execute",
+        "--body",
+        body,
+        "--format",
+        "json",
+    )
+    assert post.returncode == 0, post.stderr
+    assert json.loads(post.stdout)["data"]["warnings"] == []
+
+
 def test_launch_tui_fake_panes(monkeypatch, tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")

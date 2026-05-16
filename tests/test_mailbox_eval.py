@@ -24,7 +24,7 @@ def test_eval_scenarios_are_hard_and_structured():
         assert data["workspace_files"]
         assert data["success"]["terminal_status"] == "final"
         categories.add(data["category"])
-    assert {"context-bootstrap", "blocked-resume", "idempotency", "recovery", "context-overload"}.issubset(categories)
+    assert {"context-bootstrap", "blocked-resume", "idempotency", "recovery", "context-overload", "role-mode-protocol"}.issubset(categories)
 
 
 def test_mailbox_eval_refuses_real_without_env():

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import uuid
@@ -30,6 +31,35 @@ from agent_chat import (
     update_codex_discovery,
 )
 from mailbox_lib import default_root, generate_task_id, peer_for, pid_exists, utc_now
+
+PROTOCOL_HEADER_FIELDS = ("Mode", "Coordinator", "Owner", "Reviewer", "Next action", "Done when")
+VALID_PROTOCOL_MODES = {"DISCUSS", "EXECUTE", "REVIEW", "BLOCKED", "DONE"}
+
+
+def _header_value(body: str, field: str) -> str | None:
+    match = re.search(rf"(?im)^\s*{re.escape(field)}\s*:\s*(.+?)\s*$", body or "")
+    return match.group(1).strip() if match else None
+
+
+def lint_protocol_header(*, status: str, body: str) -> list[str]:
+    if status in {"final", "error"}:
+        return []
+    warnings: list[str] = []
+    mode = _header_value(body, "Mode")
+    if not mode:
+        warnings.append("missing protocol header: Mode")
+    elif mode.upper() not in VALID_PROTOCOL_MODES:
+        warnings.append(f"unknown protocol Mode: {mode}")
+    for field in PROTOCOL_HEADER_FIELDS[1:]:
+        if not _header_value(body, field):
+            warnings.append(f"missing protocol header: {field}")
+    if status == "blocked" and not _header_value(body, "Blocked on"):
+        warnings.append("blocked posts should include protocol header: Blocked on")
+    next_action = (_header_value(body, "Next action") or "").strip().lower()
+    blocked_on = (_header_value(body, "Blocked on") or "").strip().lower()
+    if status == "continue" and next_action in {"", "none", "n/a", "na"} and blocked_on in {"", "none", "n/a", "na"}:
+        warnings.append("non-terminal posts must name a concrete Next action or Blocked on")
+    return warnings
 
 
 def _root(args) -> Path:
@@ -348,6 +378,7 @@ def cmd_post(args) -> int:
             body = args.body_file.read_text(encoding="utf-8")
         else:
             body = sys.stdin.read()
+        protocol_warnings = lint_protocol_header(status=args.status, body=body)
         rv = send_message(
             conn,
             root=root,
@@ -363,7 +394,7 @@ def cmd_post(args) -> int:
         )
     finally:
         conn.close()
-    return _emit(args, ok=True, data={"task_id": task_id, "message_id": rv["message_id"]})
+    return _emit(args, ok=True, data={"task_id": task_id, "message_id": rv["message_id"], "warnings": protocol_warnings})
 
 
 def cmd_show(args) -> int:
