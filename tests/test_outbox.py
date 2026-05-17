@@ -97,3 +97,14 @@ def test_import_outbox_messages_ignores_pending_and_draft(tmp_path):
     _write(tmp_path / "t1" / "outbox" / "claude" / "000001.pending.md", _message())
     _write(tmp_path / "t1" / "outbox" / "claude" / "000002.draft.md", _message())
     assert import_outbox_messages(conn, root=tmp_path, room_id="t1") == []
+
+
+def test_import_outbox_messages_rejects_changed_imported_file(tmp_path):
+    conn = _seed(tmp_path)
+    path = tmp_path / "t1" / "outbox" / "claude" / "000001.md"
+    _write(path, _message(summary="first"))
+    assert len(import_outbox_messages(conn, root=tmp_path, room_id="t1")) == 1
+    _write(path, _message(summary="changed"))
+    with pytest.raises(OutboxError) as exc:
+        import_outbox_messages(conn, root=tmp_path, room_id="t1")
+    assert exc.value.reason == "outbox_file_changed_after_import"

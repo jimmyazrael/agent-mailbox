@@ -458,6 +458,20 @@ def has_message_source(conn: sqlite3.Connection, *, room_id: str, source_type: s
     return row is not None
 
 
+def message_source_hash_for_path(
+    conn: sqlite3.Connection,
+    *,
+    room_id: str,
+    source_type: str,
+    source_path: str,
+) -> Optional[str]:
+    row = conn.execute(
+        "SELECT source_hash FROM message_sources WHERE room_id=? AND source_type=? AND source_path=?",
+        (room_id, source_type, source_path),
+    ).fetchone()
+    return str(row["source_hash"]) if row else None
+
+
 def peek_latest(conn: sqlite3.Connection, room_id: str) -> Optional[Dict[str, Any]]:
     row = conn.execute("SELECT * FROM messages WHERE room_id=? ORDER BY id DESC LIMIT 1", (room_id,)).fetchone()
     return dict(row) if row else None

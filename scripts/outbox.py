@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from agent_chat import has_message_source, send_message
+from agent_chat import has_message_source, message_source_hash_for_path, send_message
 
 SENTINEL = "<!-- AGENT-MAILBOX:DONE -->"
 VALID_AGENTS = {"claude", "codex"}
@@ -127,9 +127,14 @@ def import_outbox_messages(conn: sqlite3.Connection, *, root: Path, room_id: str
     imported: list[dict[str, object]] = []
     for path in iter_outbox_files(root, room_id):
         msg = parse_outbox_message(path)
+        rel_path = str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
+        existing_path_hash = message_source_hash_for_path(conn, room_id=room_id, source_type="outbox", source_path=rel_path)
+        if existing_path_hash == msg.source_hash:
+            continue
+        if existing_path_hash is not None:
+            raise OutboxError("outbox_file_changed_after_import", path)
         if has_message_source(conn, room_id=room_id, source_type="outbox", source_hash=msg.source_hash):
             continue
-        rel_path = str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
         rv = send_message(
             conn,
             root=root,
