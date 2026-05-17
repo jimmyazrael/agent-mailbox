@@ -95,7 +95,7 @@ The panel should display:
 - Bouncing Claude uses the stored Claude session id via `repair --restart-agent claude`.
 - Bouncing Codex uses the stored Codex session id via `repair --restart-agent codex`.
 - If Codex session id is missing, offer `repair --rediscover-codex` first. If rediscovery fails, explain that Codex may need to post once with the task marker or be manually rebound.
-- Manual pane rebind must validate the pane id against live `wezterm cli list` panes in the task workspace before invoking `repair --rebind-pane`.
+- Manual pane rebind must validate the pane id against live `wezterm cli --prefer-mux list` panes in the task workspace before invoking `repair --rebind-pane`.
 - The panel must never bypass mailbox APIs. Status reads should use read-only DB access. Writes should call the existing `mailbox.py` subcommands via subprocess (`pause`, `resume`, `inject`, `stop`, `repair`).
 - If DB is locked or unavailable, show the error and keep the panel alive.
 - If a task is terminal, show terminal status and allow `q`, `r`, and transcript viewing only.

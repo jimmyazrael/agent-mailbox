@@ -18,6 +18,8 @@ The chat transcript and control panel are default-on. Use `--no-chat` or `--no-c
 
 `start` and `launch-tui` are expected to surface a visible WezTerm GUI window for the task workspace. If a workspace exists only in the mux and no window is visible, that is a launcher bug; run `wezterm start --domain unix --workspace <workspace> --attach` as a manual recovery.
 
+For scripted health checks, use `wezterm cli --prefer-mux list --format json`. Agent Mailbox controls panes through WezTerm's mux; raw `wezterm cli list --format json` can prefer a stale GUI socket on Windows and report a false failure.
+
 ## Requirements
 
 Agent Mailbox has a hard runtime dependency on [WezTerm](https://wezterm.org/), because it uses WezTerm panes, tabs, workspaces, and `wezterm cli` to keep Claude Code, Codex, the relay, and the chat transcript visible in one place.

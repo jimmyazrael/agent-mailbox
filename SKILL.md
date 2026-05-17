@@ -85,6 +85,14 @@ This opens a WezTerm workspace with Claude, Codex, relay, and read-only chat tra
 
 The WezTerm GUI must be visibly surfaced after launch. If `mailbox.py start` returns pane ids but no window appears, treat that as a launcher failure and attach manually with `wezterm start --domain unix --workspace <workspace> --attach`, then fix the launcher before relying on the task.
 
+For health checks and scripted control, use the same mux-targeted path as the launcher:
+
+```powershell
+wezterm cli --prefer-mux list --format json
+```
+
+Do not use raw `wezterm cli list --format json` as a gate. On Windows it can prefer a stale GUI socket even when the mux used by Agent Mailbox is healthy.
+
 Use `--no-chat` only when you explicitly do not want the transcript monitor:
 
 ```powershell

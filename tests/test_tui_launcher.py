@@ -57,6 +57,9 @@ def test_ensure_mux_alive_starts_when_needed(monkeypatch, tmp_path):
     wez.write_bytes(b"")
     ensure_mux_alive(wez, max_wait_s=1)
     assert any("start" in call for call in calls)
+    list_calls = [call for call in calls if "list" in call]
+    assert list_calls
+    assert all("--prefer-mux" in call for call in list_calls)
 
 
 def test_ensure_mux_alive_fails_fast_when_wezterm_list_hangs(monkeypatch, tmp_path):
