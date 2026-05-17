@@ -179,6 +179,7 @@ def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=15,
     )
     rv.check_returncode()
     return [int(pane["pane_id"]) for pane in lookup_pane(parse_wezterm_list(rv.stdout), workspace=workspace)]
@@ -224,6 +225,7 @@ def launch_workspace(
         capture_output=True,
         text=True,
         env=env,
+        timeout=30,
     )
     rv.check_returncode()
     claude_id = _parse_pane_id(rv.stdout)
@@ -245,6 +247,7 @@ def launch_workspace(
         capture_output=True,
         text=True,
         env=env,
+        timeout=30,
     )
     rv2.check_returncode()
     codex_id = _parse_pane_id(rv2.stdout)

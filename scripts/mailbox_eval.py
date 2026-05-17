@@ -288,7 +288,18 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         raise RuntimeError(rv.stderr or rv.stdout)
     task_id = json.loads(rv.stdout)["data"]["task_id"]
 
-    launch_rv = _run_mailbox("launch-tui", "--root", str(mailbox_root), "--task-id", task_id, "--format", "json", timeout=120)
+    launch_rv = _run_mailbox(
+        "launch-tui",
+        "--root",
+        str(mailbox_root),
+        "--task-id",
+        task_id,
+        "--no-chat",
+        "--no-control-panel",
+        "--format",
+        "json",
+        timeout=120,
+    )
     if launch_rv.returncode != 0:
         raise RuntimeError(launch_rv.stderr or launch_rv.stdout)
     launch = json.loads(launch_rv.stdout)["data"]
@@ -352,18 +363,23 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
 
 
 def _stop_real_task(mailbox_root: Path, task_id: str) -> None:
-    _run_mailbox(
-        "stop",
-        "--root",
-        str(mailbox_root),
-        "--task-id",
-        task_id,
-        "--close-panes",
-        "--yes",
-        "--format",
-        "json",
-        timeout=60,
-    )
+    try:
+        _run_mailbox(
+            "stop",
+            "--root",
+            str(mailbox_root),
+            "--task-id",
+            task_id,
+            "--close-panes",
+            "--yes",
+            "--format",
+            "json",
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        # The scenario result is more important than a stuck cleanup command.
+        # External cleanup can still reap panes by workspace/process name.
+        pass
 
 
 def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: bool = False) -> ScenarioResult:
@@ -455,7 +471,10 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
         return result
     finally:
         if launch_real and task_id and (not keep or (result is not None and result.status != "pass")):
-            _stop_real_task(mailbox_root, task_id)
+            try:
+                _stop_real_task(mailbox_root, task_id)
+            except Exception:
+                pass
         if not keep and not launch_real:
             shutil.rmtree(work_root, ignore_errors=True)
 

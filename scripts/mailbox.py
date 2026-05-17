@@ -204,6 +204,7 @@ def _spawn_workspace_tab(
         text=True,
         encoding="utf-8",
         errors="replace",
+        timeout=15,
     )
     list_rv.check_returncode()
     workspace_panes = lookup_pane(parse_wezterm_list(list_rv.stdout), workspace=workspace)
@@ -221,6 +222,7 @@ def _spawn_workspace_tab(
         ),
         capture_output=True,
         text=True,
+        timeout=30,
     )
     rv.check_returncode()
     text = rv.stdout.strip()
