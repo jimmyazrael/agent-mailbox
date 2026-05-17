@@ -104,6 +104,11 @@ def _emit(args, *, ok: bool, data: Optional[dict[str, Any]] = None, error: Optio
     return 0 if ok else 2
 
 
+def _debug_timing(message: str) -> None:
+    if os.environ.get("AGENT_MAILBOX_DEBUG_TIMING") == "1":
+        print(f"[agent-mailbox timing] {message}", file=sys.stderr, flush=True)
+
+
 def _common(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--root", type=Path)
     subparser.add_argument("--format", choices=["human", "json"], default="human")
@@ -356,10 +361,16 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
         else:
             from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_codex, find_wezterm, launch_workspace, validate_workspace_startup
 
+            _debug_timing("find_wezterm start")
             wez = find_wezterm()
+            _debug_timing(f"find_wezterm done {wez}")
+            _debug_timing("ensure_mux_alive start")
             ensure_mux_alive(wez)
+            _debug_timing("ensure_mux_alive done")
             try:
+                _debug_timing("find_stale_workspaces start")
                 stale = _find_stale_workspaces(wezterm_exe=wez, rooms=_rooms_by_workspace(conn))
+                _debug_timing(f"find_stale_workspaces done count={len(stale)}")
                 if stale:
                     names = [entry["workspace"] for entry in stale[:3]]
                     suffix = f" and {len(stale) - 3} more" if len(stale) > 3 else ""
@@ -371,10 +382,13 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                     )
             except Exception as exc:
                 print(f"warning: stale workspace check failed: {exc}", file=sys.stderr)
+            _debug_timing("find_codex start")
             codex_exe = find_codex()
+            _debug_timing(f"find_codex done {codex_exe}")
             env = os.environ.copy()
             if codex_exe is not None:
                 env["AGENT_MAILBOX_CODEX_EXE"] = str(codex_exe)
+            _debug_timing("launch_workspace start")
             result = launch_workspace(
                 wezterm_exe=wez,
                 workspace=workspace,
@@ -383,15 +397,18 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                 codex_cmd=codex_cmd,
                 env=env,
             )
+            _debug_timing(f"launch_workspace done {result}")
             relay_pane_id = None
             chat_pane_id = None
             control_pane_id = None
+            _debug_timing("validate_workspace_startup start")
             startup = validate_workspace_startup(
                 wezterm_exe=wez,
                 workspace=workspace,
                 claude_pane_id=int(result["claude_pane_id"]),
                 codex_pane_id=int(result["codex_pane_id"]),
             )
+            _debug_timing(f"validate_workspace_startup done ready={startup.get('ready')}")
             if launch_relay:
                 from pane_control import build_split_argv
 
@@ -453,7 +470,9 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                     str(scripts / "mailbox.py"),
                 ]
                 control_pane_id = _spawn_workspace_tab(wezterm_exe=wez, workspace=workspace, cwd=project_cwd, cmd=control_cmd)
+            _debug_timing("attach_workspace_gui start")
             attach_workspace_gui(wez, workspace, project_cwd)
+            _debug_timing("attach_workspace_gui done")
             result["startup"] = startup
         set_pane(conn, task_id, "claude", pane_id=result["claude_pane_id"])
         set_pane(conn, task_id, "codex", pane_id=result["codex_pane_id"])

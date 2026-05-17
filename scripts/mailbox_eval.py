@@ -38,16 +38,26 @@ def _run_mailbox(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as stdout, tempfile.TemporaryFile(
         "w+", encoding="utf-8", errors="replace"
     ) as stderr:
-        rv = subprocess.run(
-            [sys.executable, str(MAILBOX), *args],
-            stdout=stdout,
-            stderr=stderr,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            stdin=subprocess.DEVNULL,
-        )
+        try:
+            rv = subprocess.run(
+                [sys.executable, str(MAILBOX), *args],
+                stdout=stdout,
+                stderr=stderr,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                stdin=subprocess.DEVNULL,
+            )
+        except subprocess.TimeoutExpired:
+            stdout.seek(0)
+            stderr.seek(0)
+            return subprocess.CompletedProcess(
+                [sys.executable, str(MAILBOX), *args],
+                124,
+                stdout.read(),
+                stderr.read() or f"mailbox.py {' '.join(args)} timed out after {timeout}s",
+            )
         stdout.seek(0)
         stderr.seek(0)
         return subprocess.CompletedProcess(rv.args, rv.returncode, stdout.read(), stderr.read())

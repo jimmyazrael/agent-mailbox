@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,11 @@ def find_codex() -> Path | None:
     return Path(found) if found else None
 
 
+def _debug_timing(message: str) -> None:
+    if os.environ.get("AGENT_MAILBOX_DEBUG_TIMING") == "1":
+        print(f"[agent-mailbox timing] {message}", file=sys.stderr, flush=True)
+
+
 def _run_wezterm_list(list_argv: List[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
@@ -59,7 +65,9 @@ def _run_wezterm_list(list_argv: List[str], *, timeout: float = 5.0) -> subproce
 
 def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
     list_argv = build_list_argv(wezterm_exe=wezterm_exe)
+    _debug_timing("ensure_mux_alive:list initial start")
     rv = _run_wezterm_list(list_argv)
+    _debug_timing(f"ensure_mux_alive:list initial done rc={rv.returncode}")
     if rv.returncode == 0:
         return
     mux_exe = wezterm_exe.parent / ("wezterm-mux-server.exe" if os.name == "nt" else "wezterm-mux-server")
@@ -86,7 +94,9 @@ def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
     deadline = time.time() + max_wait_s
     last_error = rv.stderr
     while time.time() < deadline:
+        _debug_timing("ensure_mux_alive:list poll start")
         rv = _run_wezterm_list(list_argv)
+        _debug_timing(f"ensure_mux_alive:list poll done rc={rv.returncode}")
         if rv.returncode == 0:
             return
         last_error = rv.stderr
@@ -199,6 +209,7 @@ def _parse_pane_id(stdout: str) -> Optional[int]:
 
 
 def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
+    _debug_timing(f"list_pane_ids start workspace={workspace}")
     rv = subprocess.run(
         build_list_argv(wezterm_exe=wezterm_exe),
         capture_output=True,
@@ -209,6 +220,7 @@ def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
         stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
+    _debug_timing(f"list_pane_ids done workspace={workspace}")
     return [int(pane["pane_id"]) for pane in lookup_pane(parse_wezterm_list(rv.stdout), workspace=workspace)]
 
 
@@ -248,6 +260,7 @@ def launch_workspace(
         pre_ids = set(_list_pane_ids_in(wezterm_exe, workspace))
     except subprocess.CalledProcessError:
         pre_ids = set()
+    _debug_timing("launch_workspace:spawn claude start")
     rv = subprocess.run(
         build_spawn_argv(wezterm_exe=wezterm_exe, workspace=workspace, cwd=cwd, cmd=claude_cmd),
         capture_output=True,
@@ -257,6 +270,7 @@ def launch_workspace(
         stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
+    _debug_timing("launch_workspace:spawn claude done")
     claude_id = _parse_pane_id(rv.stdout)
     if claude_id is None:
         new_ids = set(_list_pane_ids_in(wezterm_exe, workspace)) - pre_ids
@@ -264,6 +278,7 @@ def launch_workspace(
             raise RuntimeError(f"unable to identify new claude pane: {new_ids}")
         claude_id = next(iter(new_ids))
     pre_codex = set(_list_pane_ids_in(wezterm_exe, workspace))
+    _debug_timing("launch_workspace:split codex start")
     rv2 = subprocess.run(
         build_split_argv(
             wezterm_exe=wezterm_exe,
@@ -280,6 +295,7 @@ def launch_workspace(
         stdin=subprocess.DEVNULL,
     )
     rv2.check_returncode()
+    _debug_timing("launch_workspace:split codex done")
     codex_id = _parse_pane_id(rv2.stdout)
     if codex_id is None:
         new_ids = set(_list_pane_ids_in(wezterm_exe, workspace)) - pre_codex
