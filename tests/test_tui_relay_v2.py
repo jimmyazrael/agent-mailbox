@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from agent_chat import add_participant, connect_db, init_db, init_room, send_message, set_pane
-from tui_relay_v2 import doorbell_text, first_turn_text, run_once
+from tui_relay_v2 import doorbell_text, first_turn_text, run_once, run_watcher_loop
 
 
 def _seed(root: Path):
@@ -83,6 +83,38 @@ def test_run_once_pauses_on_malformed_outbox(monkeypatch, tmp_path):
     relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id='t1'").fetchone()
     assert relay["paused"] == 1
     assert relay["pause_reason"] == "malformed_outbox:trailing_content_after_sentinel"
+
+
+def test_run_once_pauses_on_invalid_outbox_status(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    path = tmp_path / "t1" / "outbox" / "claude" / "000001.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\nfrom: claude\nto: codex\nstatus: ready\nsummary: bad\n---\n\nbody\n\n<!-- AGENT-MAILBOX:DONE -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("tui_relay_v2._pane_alive", lambda *args, **kwargs: True)
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "malformed_outbox"
+    relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id='t1'").fetchone()
+    assert relay["paused"] == 1
+    assert relay["pause_reason"] == "malformed_outbox:invalid_status"
+
+
+def test_watcher_exits_and_records_fail_closed_result(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    path = tmp_path / "t1" / "outbox" / "claude" / "000001.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "---\nfrom: claude\nto: codex\nstatus: ready\nsummary: bad\n---\n\nbody\n\n<!-- AGENT-MAILBOX:DONE -->\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("tui_relay_v2._pane_alive", lambda *args, **kwargs: True)
+    assert run_watcher_loop(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm"), poll_interval_s=0.01, max_iters=5) == "malformed_outbox"
+    relay = conn.execute("SELECT paused, pause_reason, watcher_last_result, watcher_finished_at FROM tui_relay_state WHERE room_id='t1'").fetchone()
+    assert relay["paused"] == 1
+    assert relay["pause_reason"] == "malformed_outbox:invalid_status"
+    assert relay["watcher_last_result"] == "malformed_outbox"
+    assert relay["watcher_finished_at"]
 
 
 def test_run_once_respects_db_only_user_inject(monkeypatch, tmp_path):

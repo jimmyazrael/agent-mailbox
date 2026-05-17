@@ -13,7 +13,7 @@
     "config/policy.toml": "required_review = true\nforbidden_action = \"edit important files\"\n",
     "src/app.py": "print('do not edit me')\n"
   },
-  "context": "This is a v2 outbox context-bootstrap evaluation. Agents must read the project files before replying. Write each peer-facing response as a completed outbox Markdown file using frontmatter and the AGENT-MAILBOX:DONE sentinel. The correct final answer must mention docs/mission.md and config/policy.toml, and must not edit src/app.py.",
+  "context": "This is a v2 outbox context-bootstrap evaluation. Agents must read the project files before replying. Write each peer-facing response as a completed outbox Markdown file using frontmatter and the AGENT-MAILBOX:DONE sentinel. The frontmatter status field MUST be one of continue, blocked, final, or error; do not invent statuses such as ready. The correct final answer must mention docs/mission.md and config/policy.toml, and must not edit src/app.py.",
   "success": {
     "required_transcript_terms": [
       "docs/mission.md",

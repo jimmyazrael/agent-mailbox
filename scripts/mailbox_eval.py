@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_chat import connect_db, export_transcript_md
+from mailbox_lib import pid_exists
 from outbox import SENTINEL
 from pane_control import build_activate_pane_argv, build_get_text_argv, build_send_text_argv, build_split_argv
 
@@ -258,9 +259,14 @@ def _poll_to_terminal(
         conn = connect_db(root)
         try:
             room = conn.execute("SELECT status, last_message_id FROM rooms WHERE id=?", (task_id,)).fetchone()
+            relay = conn.execute("SELECT paused, pause_reason, watcher_pid, watcher_last_result FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
             status = room["status"]
             if status in {"final", "error", "stopped"}:
                 return status, observed_blocked
+            if relay and int(relay["paused"] or 0):
+                return f"paused:{relay['pause_reason'] or 'unknown'}", observed_blocked
+            if relay and relay["watcher_pid"] and not pid_exists(relay["watcher_pid"]):
+                return f"relay_exited:{relay['watcher_last_result'] or 'unknown'}", observed_blocked
             if status == "blocked":
                 observed_blocked = True
                 injection = scenario.get("inject_on_blocked")

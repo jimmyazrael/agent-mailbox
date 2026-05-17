@@ -9,5 +9,8 @@ if "%~5"=="" (
 ) else (
   python "%~4" tui-relay --root "%~2" --task-id "%~1" --max-iters "%~5"
 )
+set "AGENT_MAILBOX_RELAY_EXIT=%ERRORLEVEL%"
+echo [agent-mailbox] relay exited rc=%AGENT_MAILBOX_RELAY_EXIT%
+python "%~4" status --root "%~2" --task-id "%~1"
 endlocal
 cmd /k

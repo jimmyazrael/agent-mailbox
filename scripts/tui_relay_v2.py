@@ -24,6 +24,7 @@ def doorbell_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
         "To respond:\n"
         f"1. Write your reply to: {write_path}\n"
         "2. Use frontmatter: from, to, status, summary; then body.\n"
+        "   status MUST be one of: continue, blocked, final, error.\n"
         "3. End with: <!-- AGENT-MAILBOX:DONE -->\n"
         "4. Stop.\r"
     )
@@ -37,6 +38,7 @@ def first_turn_text(*, agent: str, task_id: str, root: Path) -> str:
         "To respond:\n"
         f"1. Write your reply to: {write_path}\n"
         "2. Use frontmatter: from, to, status, summary; then body.\n"
+        "   status MUST be one of: continue, blocked, final, error.\n"
         "3. End with: <!-- AGENT-MAILBOX:DONE -->\n"
         "4. Stop.\r"
     )
@@ -258,12 +260,26 @@ def run_watcher_loop(
         conn.execute("COMMIT")
     finally:
         conn.close()
-    iters = 0
-    while True:
-        result = run_once(root=root, task_id=task_id, wezterm_exe=wezterm_exe)
-        if result in {"terminal", "missing_room"}:
-            return result
-        iters += 1
-        if max_iters is not None and iters >= max_iters:
-            return "max_iters"
-        time.sleep(poll_interval_s)
+    result = "unknown"
+    try:
+        iters = 0
+        while True:
+            result = run_once(root=root, task_id=task_id, wezterm_exe=wezterm_exe)
+            if result in {"terminal", "missing_room", "paused", "malformed_outbox", "missing_outbox_after_turn", "missing_pane", "panes_lost", "send_failed"}:
+                return result
+            iters += 1
+            if max_iters is not None and iters >= max_iters:
+                result = "max_iters"
+                return result
+            time.sleep(poll_interval_s)
+    finally:
+        conn = connect_db(root)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(
+                "UPDATE tui_relay_state SET watcher_last_result=?, watcher_finished_at=? WHERE room_id=?",
+                (result, utc_now(), task_id),
+            )
+            conn.execute("COMMIT")
+        finally:
+            conn.close()

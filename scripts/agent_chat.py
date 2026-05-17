@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS tui_relay_state (
     pause_reason TEXT,
     watcher_pid INTEGER,
     watcher_started_at TEXT,
-    watcher_host TEXT
+    watcher_host TEXT,
+    watcher_last_result TEXT,
+    watcher_finished_at TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

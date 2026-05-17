@@ -145,6 +145,17 @@ def test_mailbox_eval_terminal_room_skips_extra_doorbell(monkeypatch, tmp_path):
     assert calls == []
 
 
+def test_mailbox_eval_reports_paused_relay_reason(tmp_path):
+    root = tmp_path / "mb"
+    init_db(root)
+    conn = connect_db(root)
+    init_room(conn, room_id="t1", name="T1", purpose="p", project_cwd=tmp_path, workspace="w", first_turn="claude")
+    conn.execute("UPDATE tui_relay_state SET paused=1, pause_reason='malformed_outbox:invalid_status' WHERE room_id='t1'")
+    conn.close()
+    terminal, _ = mailbox_eval._poll_to_terminal(root, "t1", 30, {})
+    assert terminal == "paused:malformed_outbox:invalid_status"
+
+
 def test_mailbox_eval_failed_real_run_stops_task(monkeypatch, tmp_path):
     calls = []
 

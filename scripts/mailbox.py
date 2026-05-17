@@ -110,6 +110,15 @@ def _debug_timing(message: str) -> None:
         print(f"[agent-mailbox timing] {message}", file=sys.stderr, flush=True)
 
 
+def _row_get(row: sqlite3.Row | dict[str, Any] | None, key: str, default: Any = None) -> Any:
+    if row is None:
+        return default
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
+
+
 def _common(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--root", type=Path)
     subparser.add_argument("--format", choices=["human", "json"], default="human")
@@ -777,7 +786,7 @@ def _format_panel_status(state: dict[str, Any]) -> str:
         f"Root: {state['root']}",
         f"Status: {room['status']}    Turn: {room['turn']}    Round: {room['round']}    Last message: {room['last_message_id']}",
         f"Paused: {bool(relay.get('paused', 0))}    Reason: {relay.get('pause_reason') or ''}",
-        f"Watcher: pid={relay.get('watcher_pid') or '<none>'}    alive={pid_exists(relay.get('watcher_pid'))}",
+        f"Watcher: pid={relay.get('watcher_pid') or '<none>'}    alive={pid_exists(relay.get('watcher_pid'))}    last={relay.get('watcher_last_result') or ''}",
         f"Pending user injections: {state.get('pending_user_injections', 0)}",
         f"Panes: {', '.join(f'{k}={v}' for k, v in sorted(panes.items())) or '(none)'}",
         f"Codex discovery: {sessions.get('codex', {}).get('discovery_status')}    Codex session: {sessions.get('codex', {}).get('session_id') or '<none>'}",
@@ -1078,6 +1087,8 @@ def cmd_status(args) -> int:
             "pause_reason": relay["pause_reason"],
             "watcher_pid": relay["watcher_pid"],
             "watcher_alive": watcher_alive,
+            "watcher_last_result": _row_get(relay, "watcher_last_result"),
+            "watcher_finished_at": _row_get(relay, "watcher_finished_at"),
             "watcher_dead_with_running_state": watcher_dead_with_running_state,
             "pending_user_injections": pending_user_injections,
             "panes": panes,
@@ -1498,7 +1509,10 @@ def cmd_stop(args) -> int:
         pane_ids = [int(row["pane_id"]) for row in conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_id IS NOT NULL", (task_id,))]
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("UPDATE rooms SET status='stopped' WHERE id=?", (task_id,))
-        conn.execute("UPDATE tui_relay_state SET paused=1, pause_reason='user_stopped' WHERE room_id=?", (task_id,))
+        conn.execute(
+            "UPDATE tui_relay_state SET paused=1, pause_reason=COALESCE(pause_reason, 'user_stopped') WHERE room_id=?",
+            (task_id,),
+        )
         conn.execute("COMMIT")
     finally:
         conn.close()
