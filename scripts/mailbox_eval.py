@@ -676,6 +676,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
                 row["agent"]: dict(row)
                 for row in conn.execute("SELECT * FROM agent_sessions WHERE room_id=?", (task_id,)).fetchall()
             }
+            participation_notes = _participation_notes(conn, task_id, scenario.get("success", {}))
         finally:
             conn.close()
         success = scenario.get("success", {})
@@ -688,7 +689,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             notes.append(f"too many messages: {message_count}")
         if success.get("codex_discovery_status") and sessions.get("codex", {}).get("discovery_status") != success["codex_discovery_status"]:
             notes.append(f"codex discovery status: {sessions.get('codex', {}).get('discovery_status')}")
-        notes.extend(_participation_notes(conn, task_id, success))
+        notes.extend(participation_notes)
         for rel in success.get("forbidden_file_changes", []):
             if _file_fingerprint(project, rel) != fingerprints.get(rel):
                 notes.append(f"forbidden file changed: {rel}")

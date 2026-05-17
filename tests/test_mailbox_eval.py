@@ -246,6 +246,50 @@ def test_mailbox_eval_failed_real_run_stops_task(monkeypatch, tmp_path):
     assert any(call[:2] == ("stop", "--root") and "--close-panes" in call for call in calls)
 
 
+def test_mailbox_eval_participation_validation_uses_open_connection(monkeypatch, tmp_path):
+    import mailbox_eval
+
+    root = tmp_path / "mb"
+    project = tmp_path / "project"
+    task_id = "t1"
+
+    def fake_start(mailbox_root, project_path, scenario, context_path):
+        init_db(mailbox_root)
+        conn = connect_db(mailbox_root)
+        from agent_chat import init_room
+
+        init_room(conn, room_id=task_id, name="T1", purpose="p", project_cwd=project_path, workspace="w", first_turn="claude")
+        add_participant(conn, task_id, "claude")
+        add_participant(conn, task_id, "codex")
+        send_message(conn, root=mailbox_root, room_id=task_id, from_agent="claude", to_agent="codex", kind="outbox", status="continue", summary="handoff", body="R-2026-ALPHA")
+        send_message(conn, root=mailbox_root, room_id=task_id, from_agent="codex", to_agent="claude", kind="outbox", status="final", summary="done", body="R-2026-ALPHA")
+        conn.close()
+        return task_id, {"claude_pane_id": 1, "codex_pane_id": 2, "relay_pane_id": 3}, Path("wezterm")
+
+    monkeypatch.setattr(mailbox_eval, "_start_real_task", fake_start)
+    monkeypatch.setattr(mailbox_eval, "_poll_to_terminal", lambda *args, **kwargs: ("final", False))
+    monkeypatch.setattr(mailbox_eval, "_capture_pane_snapshots", lambda *args, **kwargs: None)
+    result = mailbox_eval.run_scenario(
+        {
+            "id": "AM-X",
+            "name": "x",
+            "relay_version": "v2-outbox",
+            "goal": "g",
+            "context": "c",
+            "workspace_files": {"a.txt": "a"},
+            "success": {
+                "terminal_status": "final",
+                "required_transcript_terms": ["R-2026-ALPHA"],
+                "required_outbox_authors": ["claude", "codex"],
+                "final_from_agent": "codex",
+            },
+        },
+        keep=True,
+        launch_real=True,
+    )
+    assert result.status == "pass"
+
+
 def test_stop_real_task_reports_post_stop_mux_timeout(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mailbox_eval,
