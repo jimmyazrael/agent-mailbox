@@ -1,0 +1,18 @@
+{
+  "id": "AM-04",
+  "name": "Codex rediscovery after launch-time discovery failure",
+  "category": "recovery",
+  "difficulty": "hard",
+  "goal": "Codex session rediscovery must succeed after trigger text includes the literal task marker.",
+  "first_turn": "claude",
+  "timeout_seconds": 420,
+  "workspace_files": {
+    "README.md": "# Rediscovery\n\nThis scenario validates AGENT_MAILBOX_TASK_ID marker propagation."
+  },
+  "context": "The trigger must include the literal AGENT_MAILBOX_TASK_ID marker so Codex rollout discovery can find the session later.",
+  "actions": ["rediscover_codex_after_first_codex_turn"],
+  "success": {
+    "codex_discovery_status": "discovered",
+    "terminal_status": "final"
+  }
+}

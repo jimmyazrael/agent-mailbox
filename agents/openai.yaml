@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Mailbox"
+  short_description: "Coordinate Codex and Claude Code through a shared mailbox relay."
+  default_prompt: "Start communication with the peer agent using the agent-mailbox relay."

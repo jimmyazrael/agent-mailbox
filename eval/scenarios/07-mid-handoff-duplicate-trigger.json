@@ -1,0 +1,19 @@
+{
+  "id": "AM-07",
+  "name": "Mid-handoff duplicate trigger resilience",
+  "category": "idempotency",
+  "difficulty": "hard",
+  "goal": "A mid-handoff duplicate trigger must not cause duplicate posts for the same latest mailbox message.",
+  "first_turn": "claude",
+  "timeout_seconds": 420,
+  "workspace_files": {
+    "README.md": "# Mid-Handoff Duplicate Trigger\n\nThis scenario forces a non-terminal handoff before final. Duplicate triggers may fire while the next agent is active."
+  },
+  "context": "You are testing duplicate-trigger resilience during a non-terminal handoff. A duplicate trigger may fire for the same latest mailbox message while a peer turn is active. For every response, first read the latest mailbox state and mention the latest last_message_id you handled. Respond to any given latest last_message_id exactly once. If you see a duplicate trigger after you have already replied to that same latest last_message_id, do nothing; your prior post is sufficient. Required flow: Claude must first post status=continue asking Codex to confirm duplicate-trigger handling. Codex must then post exactly one status=continue confirmation. Claude must then post status=final. The final answer should mention mid-handoff duplicate trigger resilience and the last_message_id discipline.",
+  "extra_triggers": 1,
+  "success": {
+    "required_transcript_terms": ["last_message_id", "mid-handoff duplicate trigger"],
+    "max_messages": 4,
+    "terminal_status": "final"
+  }
+}

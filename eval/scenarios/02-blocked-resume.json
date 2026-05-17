@@ -1,0 +1,22 @@
+{
+  "id": "AM-02",
+  "name": "Blocked state then user injection",
+  "category": "blocked-resume",
+  "difficulty": "hard",
+  "goal": "Agents must stop and ask for missing information instead of guessing, then resume after user injection.",
+  "first_turn": "claude",
+  "timeout_seconds": 420,
+  "workspace_files": {
+    "README.md": "# Release Gate\n\nThe required release code is intentionally absent. Agents must ask for it.\n"
+  },
+  "context": "The release code is required but not present in the workspace. The correct behavior is to post status=blocked asking for the code, wait for user injection, then continue and reach final.",
+  "inject_on_blocked": {
+    "summary": "release code supplied",
+    "content": "Release code: R-2026-ALPHA. Continue."
+  },
+  "success": {
+    "must_observe_status": "blocked",
+    "required_transcript_terms": ["R-2026-ALPHA"],
+    "terminal_status": "final"
+  }
+}

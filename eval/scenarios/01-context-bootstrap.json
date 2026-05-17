@@ -1,0 +1,21 @@
+{
+  "id": "AM-01",
+  "name": "Fresh context bootstrap under ambiguity",
+  "category": "context-bootstrap",
+  "difficulty": "hard",
+  "goal": "Claude and Codex must identify the relevant project instructions and produce a final answer that obeys the bootstrap context.",
+  "first_turn": "claude",
+  "timeout_seconds": 420,
+  "workspace_files": {
+    "README.md": "# Ambiguous Project\n\nThis file is intentionally generic. The correct instructions are in docs/mission.md.\n",
+    "docs/mission.md": "Relevant instruction: inspect config/policy.toml before proposing changes. Do not edit source files in this scenario.\n",
+    "config/policy.toml": "required_review = true\nforbidden_action = \"edit important files\"\n",
+    "src/app.py": "print('do not edit me')\n"
+  },
+  "context": "This is a context-bootstrap evaluation. Agents must read the project files before replying. The correct final answer must mention docs/mission.md and config/policy.toml, and must not edit src/app.py.",
+  "success": {
+    "required_transcript_terms": ["docs/mission.md", "config/policy.toml"],
+    "forbidden_file_changes": ["src/app.py"],
+    "terminal_status": "final"
+  }
+}

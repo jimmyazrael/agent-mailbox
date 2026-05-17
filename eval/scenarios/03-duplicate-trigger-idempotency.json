@@ -1,0 +1,19 @@
+{
+  "id": "AM-03",
+  "name": "Duplicate trigger idempotency",
+  "category": "idempotency",
+  "difficulty": "hard",
+  "goal": "A duplicate trigger must not cause duplicate posts for the same latest message.",
+  "first_turn": "claude",
+  "timeout_seconds": 420,
+  "workspace_files": {
+    "README.md": "# Idempotency Trap\n\nThe task is simple, but the relay will be asked to trigger twice."
+  },
+  "context": "If the same mailbox message is already handled, do not post a duplicate response. The final answer should mention idempotency.",
+  "extra_triggers": 1,
+  "success": {
+    "required_transcript_terms": ["idempotency"],
+    "max_messages": 4,
+    "terminal_status": "final"
+  }
+}
