@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from pane_control import build_spawn_argv
 from tui_launcher import ensure_mux_alive, find_wezterm, launch_workspace, lookup_pane, parse_wezterm_list
 
 
@@ -79,3 +80,19 @@ def test_launch_workspace_captures_pane_ids(monkeypatch, tmp_path):
     )
     assert result["claude_pane_id"] == 11
     assert result["codex_pane_id"] == 12
+
+
+def test_spawn_existing_window_uses_window_id_not_workspace(tmp_path):
+    wez = tmp_path / "wezterm.exe"
+    argv = build_spawn_argv(
+        wezterm_exe=wez,
+        workspace="agent-mailbox-t1",
+        cwd=tmp_path,
+        cmd=["cmd", "/c", "chat.cmd"],
+        new_window=False,
+        window_id=7,
+    )
+    assert "--window-id" in argv
+    assert "7" in argv
+    assert "--workspace" not in argv
+    assert "--new-window" not in argv

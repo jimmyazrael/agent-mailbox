@@ -19,11 +19,14 @@ def build_spawn_argv(
     cmd: List[str],
     prefer_mux: bool = True,
     new_window: bool = True,
+    window_id: Optional[int] = None,
 ) -> List[str]:
     argv = _base(wezterm_exe, prefer_mux) + ["spawn"]
     if new_window:
-        argv.append("--new-window")
-    argv += ["--workspace", workspace, "--cwd", str(cwd), "--"] + cmd
+        argv += ["--new-window", "--workspace", workspace]
+    elif window_id is not None:
+        argv += ["--window-id", str(window_id)]
+    argv += ["--cwd", str(cwd), "--"] + cmd
     return argv
 
 

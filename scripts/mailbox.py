@@ -263,7 +263,8 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                 text = rv.stdout.strip()
                 relay_pane_id = int(text) if text.isdigit() else None
             if getattr(args, "with_chat", False):
-                from pane_control import build_spawn_argv
+                from pane_control import build_list_argv, build_spawn_argv
+                from tui_launcher import lookup_pane, parse_wezterm_list
 
                 chat_cmd = [
                     "cmd",
@@ -275,6 +276,18 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                     str(scripts / "mailbox.py"),
                     str(getattr(args, "chat_poll_interval_s", 1.5)),
                 ]
+                list_rv = subprocess.run(
+                    build_list_argv(wezterm_exe=wez),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                list_rv.check_returncode()
+                workspace_panes = lookup_pane(parse_wezterm_list(list_rv.stdout), workspace=workspace)
+                if not workspace_panes:
+                    raise RuntimeError(f"workspace not found for chat pane: {workspace}")
+                window_id = int(workspace_panes[0]["window_id"])
                 rv = subprocess.run(
                     build_spawn_argv(
                         wezterm_exe=wez,
@@ -282,6 +295,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                         cwd=project_cwd,
                         cmd=chat_cmd,
                         new_window=False,
+                        window_id=window_id,
                     ),
                     capture_output=True,
                     text=True,
