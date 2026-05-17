@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from agent_chat import connect_db, init_db, send_message
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -632,6 +634,60 @@ def test_startup_gate_pauses_relay_when_agent_pane_not_ready(monkeypatch, tmp_pa
     assert not any("launch_relay_pane.cmd" in " ".join(call) for call in split_calls)
 
 
+def test_start_warns_about_stale_workspaces_without_reaping(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "mb"
+    launched_workspace = None
+    killed = []
+
+    def fake_launch_workspace(**kwargs):
+        nonlocal launched_workspace
+        launched_workspace = kwargs["workspace"]
+        return {"workspace": kwargs["workspace"], "claude_pane_id": 11, "codex_pane_id": 12, "spawned_at": "now"}
+
+    def fake_run(argv, **kwargs):
+        if "list" in argv:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                json.dumps(
+                    [
+                        {"pane_id": 91, "workspace": "agent-mailbox-orphan", "window_id": 99},
+                        {"pane_id": 11, "workspace": launched_workspace or "agent-mailbox-active", "window_id": 99},
+                    ]
+                ),
+                "",
+            )
+        if "kill-pane" in argv:
+            killed.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr("tui_launcher.find_codex", lambda: None)
+    monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
+    monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr(
+        "tui_launcher.validate_workspace_startup",
+        lambda **kwargs: {
+            "ready": False,
+            "visible": True,
+            "agents": {"claude": {"state": "ready"}, "codex": {"state": "update_prompt"}},
+        },
+    )
+    monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
+    monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(
+        ["start", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--no-chat", "--no-control-panel", "--format", "json"]
+    )
+    assert mailbox_cli.cmd_start(args) == 0
+    captured = capsys.readouterr()
+    assert "stale agent-mailbox workspaces detected" in captured.err
+    assert killed == []
+
+
 def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
     root = tmp_path / "mb"
     env = dict(
@@ -741,6 +797,7 @@ def test_watch_chat_emits_existing_messages_without_mutating_state(tmp_path):
     conn.close()
     rv = _run("watch-chat", "--root", str(root), "--task-id", task_id, "--max-iters", "1", "--no-color")
     assert rv.returncode == 0, rv.stderr
+    assert "read-only transcript view" in rv.stdout
     assert "[1]" in rv.stdout
     assert "user -> broadcast [continue] bootstrap context" in rv.stdout
     assert "claude -> codex [continue] hello" in rv.stdout
@@ -761,9 +818,29 @@ def test_watch_chat_from_message_id_emits_only_newer_messages(tmp_path):
     _run("post", "--root", str(root), "--task-id", task_id, "--from", "codex", "--to", "claude", "--status", "continue", "--summary", "new", "--body", "new body")
     rv = _run("watch-chat", "--root", str(root), "--task-id", task_id, "--from-message-id", "1", "--max-iters", "1", "--no-color")
     assert rv.returncode == 0, rv.stderr
+    assert "read-only transcript view" in rv.stdout
     assert "old body" not in rv.stdout
     assert "codex -> claude [continue] new" in rv.stdout
     assert "new body" in rv.stdout
+
+
+def test_dry_run_prints_current_turn_trigger_without_mutating(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    before = dict(conn.execute("SELECT turn, round, last_message_id FROM rooms WHERE id=?", (task_id,)).fetchone())
+    conn.close()
+    rv = _run("dry-run", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert rv.returncode == 0, rv.stderr
+    data = json.loads(rv.stdout)["data"]
+    assert data["agent"] == "claude"
+    assert data["peer"] == "codex"
+    assert f"agent-mailbox task {task_id}" in data["trigger_text"]
+    conn = connect_db(root)
+    after = dict(conn.execute("SELECT turn, round, last_message_id FROM rooms WHERE id=?", (task_id,)).fetchone())
+    conn.close()
+    assert after == before
 
 
 def test_control_panel_parser_defaults_and_once_status(tmp_path):
@@ -1007,6 +1084,23 @@ def test_status_detects_dead_watcher_in_running_state(tmp_path):
     assert data["watcher_dead_with_running_state"] is True
 
 
+def test_status_reports_pending_user_injections(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    inject = _run("inject", "--root", str(root), "--task-id", task_id, "--content", "please inspect", "--format", "json")
+    assert inject.returncode == 0, inject.stderr
+    message_id = json.loads(inject.stdout)["data"]["message_id"]
+
+    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert json.loads(status.stdout)["data"]["pending_user_injections"] == 1
+
+    ack = _run("ack", "--root", str(root), "--task-id", task_id, "--agent", "claude", "--message-id", str(message_id), "--format", "json")
+    assert ack.returncode == 0, ack.stderr
+    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert json.loads(status.stdout)["data"]["pending_user_injections"] == 0
+
+
 def test_reap_stale_workspaces_dry_run_and_yes(monkeypatch, tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
@@ -1083,6 +1177,45 @@ def test_archive_terminal_task_removes_live_rows_and_writes_archive(tmp_path):
         assert msg["body_text"] == "archive me"
     finally:
         archived.close()
+
+
+def test_archive_rmtree_failure_keeps_live_rows(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    task_dir = root / task_id
+    task_dir.mkdir(parents=True)
+    (task_dir / "artifact.txt").write_text("locked", encoding="utf-8")
+    conn = connect_db(root)
+    send_message(
+        conn,
+        root=root,
+        room_id=task_id,
+        from_agent="claude",
+        to_agent="codex",
+        kind="message",
+        status="final",
+        summary="done",
+        body="archive me",
+    )
+    conn.close()
+
+    import mailbox as mailbox_cli
+
+    real_rmtree = mailbox_cli.shutil.rmtree
+
+    def flaky_rmtree(path, *args, **kwargs):
+        if Path(path) == task_dir:
+            raise OSError("simulated file lock")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(mailbox_cli.shutil, "rmtree", flaky_rmtree)
+    args = mailbox_cli.build_parser().parse_args(["archive", "--root", str(root), "--task-id", task_id, "--yes", "--format", "json"])
+    with pytest.raises(OSError, match="simulated file lock"):
+        mailbox_cli.cmd_archive(args)
+    conn = connect_db(root)
+    assert conn.execute("SELECT id FROM rooms WHERE id=?", (task_id,)).fetchone() is not None
+    assert task_dir.exists()
 
 
 def test_repair_restart_agent_sends_resume_to_bound_pane(monkeypatch, tmp_path):

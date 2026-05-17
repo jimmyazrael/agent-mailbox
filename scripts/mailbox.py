@@ -354,6 +354,16 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
 
             wez = find_wezterm()
             ensure_mux_alive(wez)
+            try:
+                stale = _find_stale_workspaces(wezterm_exe=wez, rooms=_rooms_by_workspace(conn))
+                if stale:
+                    print(
+                        f"warning: {len(stale)} stale agent-mailbox workspaces detected. "
+                        "Run 'mailbox.py reap-stale-workspaces' to clean up.",
+                        file=sys.stderr,
+                    )
+            except Exception as exc:
+                print(f"warning: stale workspace check failed: {exc}", file=sys.stderr)
             codex_exe = find_codex()
             env = os.environ.copy()
             if codex_exe is not None:
@@ -676,6 +686,7 @@ def cmd_watch_chat(args) -> int:
         terminal_seen_at: float | None = None
         color = bool(sys.stdout.isatty() and not args.no_color)
         iteration = 0
+        print("[agent-mailbox] read-only transcript view; input is ignored. Use control panel for actions.", flush=True)
         while True:
             seen, status, text = _watch_chat_once(conn, root, task_id, after_id=seen, color=color)
             if text:
@@ -719,6 +730,18 @@ def _read_panel_state(root: Path, task_id: str) -> dict[str, Any]:
         }
         panes = {row["pane_role"]: row["pane_id"] for row in conn.execute("SELECT * FROM panes WHERE room_id=?", (resolved,)).fetchall()}
         latest = conn.execute("SELECT * FROM messages WHERE room_id=? ORDER BY id DESC LIMIT 1", (resolved,)).fetchone()
+        pending_user_injections = 0
+        if room["turn"]:
+            pending_user_injections = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM messages m "
+                    "LEFT JOIN receipts r ON r.message_id=m.id AND r.agent=? "
+                    "WHERE m.room_id=? AND m.from_agent='user' "
+                    "AND (m.to_agent=? OR m.to_agent='broadcast' OR m.to_agent IS NULL) "
+                    "AND r.ack_at IS NULL",
+                    (room["turn"], resolved, room["turn"]),
+                ).fetchone()["n"]
+            )
         return {
             "task_id": resolved,
             "root": str(root),
@@ -727,6 +750,7 @@ def _read_panel_state(root: Path, task_id: str) -> dict[str, Any]:
             "sessions": sessions,
             "panes": panes,
             "latest": dict(latest) if latest else None,
+            "pending_user_injections": pending_user_injections,
         }
     finally:
         conn.close()
@@ -746,6 +770,7 @@ def _format_panel_status(state: dict[str, Any]) -> str:
         f"Status: {room['status']}    Turn: {room['turn']}    Round: {room['round']}    Last message: {room['last_message_id']}",
         f"Paused: {bool(relay.get('paused', 0))}    Reason: {relay.get('pause_reason') or ''}",
         f"Watcher: pid={relay.get('watcher_pid') or '<none>'}    alive={pid_exists(relay.get('watcher_pid'))}",
+        f"Pending user injections: {state.get('pending_user_injections', 0)}",
         f"Panes: {', '.join(f'{k}={v}' for k, v in sorted(panes.items())) or '(none)'}",
         f"Codex discovery: {sessions.get('codex', {}).get('discovery_status')}    Codex session: {sessions.get('codex', {}).get('session_id') or '<none>'}",
         "",
@@ -1021,6 +1046,18 @@ def cmd_status(args) -> int:
             and room["status"] not in TERMINAL_ROOM_STATUSES
             and not bool(relay["paused"])
         )
+        pending_user_injections = 0
+        if room["turn"]:
+            pending_user_injections = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM messages m "
+                    "LEFT JOIN receipts r ON r.message_id=m.id AND r.agent=? "
+                    "WHERE m.room_id=? AND m.from_agent='user' "
+                    "AND (m.to_agent=? OR m.to_agent='broadcast' OR m.to_agent IS NULL) "
+                    "AND r.ack_at IS NULL",
+                    (room["turn"], task_id, room["turn"]),
+                ).fetchone()["n"]
+            )
         data = {
             "task_id": task_id,
             "status": room["status"],
@@ -1032,6 +1069,7 @@ def cmd_status(args) -> int:
             "watcher_pid": relay["watcher_pid"],
             "watcher_alive": watcher_alive,
             "watcher_dead_with_running_state": watcher_dead_with_running_state,
+            "pending_user_injections": pending_user_injections,
             "panes": panes,
             "codex_discovery_status": sessions.get("codex", {}).get("discovery_status"),
         }
@@ -1045,24 +1083,19 @@ def _workspace_task_id(workspace: str) -> str | None:
     return workspace[len(prefix):] if workspace.startswith(prefix) else None
 
 
-def cmd_reap_stale_workspaces(args) -> int:
-    root = _root(args)
-    init_db(root)
-    conn = connect_db(root)
-    try:
-        rooms = {
-            row["workspace"]: dict(row)
-            for row in conn.execute("SELECT id, workspace, status FROM rooms").fetchall()
-        }
-    finally:
-        conn.close()
+def _rooms_by_workspace(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
+    return {
+        row["workspace"]: dict(row)
+        for row in conn.execute("SELECT id, workspace, status FROM rooms").fetchall()
+    }
 
-    from pane_control import build_kill_pane_argv, build_list_argv
-    from tui_launcher import find_wezterm, parse_wezterm_list
 
-    wez = find_wezterm()
+def _find_stale_workspaces(*, wezterm_exe: Path, rooms: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    from pane_control import build_list_argv
+    from tui_launcher import parse_wezterm_list
+
     rv = subprocess.run(
-        build_list_argv(wezterm_exe=wez),
+        build_list_argv(wezterm_exe=wezterm_exe),
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -1079,7 +1112,6 @@ def cmd_reap_stale_workspaces(args) -> int:
         by_workspace.setdefault(workspace, []).append(int(pane["pane_id"]))
 
     stale: list[dict[str, Any]] = []
-    killed: list[int] = []
     for workspace, pane_ids in sorted(by_workspace.items()):
         room = rooms.get(workspace)
         reason = None
@@ -1096,8 +1128,27 @@ def cmd_reap_stale_workspaces(args) -> int:
             "pane_ids": pane_ids,
         }
         stale.append(entry)
+    return stale
+
+
+def cmd_reap_stale_workspaces(args) -> int:
+    root = _root(args)
+    init_db(root)
+    conn = connect_db(root)
+    try:
+        rooms = _rooms_by_workspace(conn)
+    finally:
+        conn.close()
+
+    from pane_control import build_kill_pane_argv
+    from tui_launcher import find_wezterm
+
+    wez = find_wezterm()
+    stale = _find_stale_workspaces(wezterm_exe=wez, rooms=rooms)
+    killed: list[int] = []
+    for entry in stale:
         if args.yes:
-            for pane_id in pane_ids:
+            for pane_id in entry["pane_ids"]:
                 kill = subprocess.run(
                     build_kill_pane_argv(wezterm_exe=wez, pane_id=pane_id),
                     capture_output=True,
@@ -1109,6 +1160,27 @@ def cmd_reap_stale_workspaces(args) -> int:
                 kill.check_returncode()
                 killed.append(pane_id)
     return _emit(args, ok=True, data={"dry_run": not args.yes, "stale_workspaces": stale, "killed_pane_ids": killed})
+
+
+def cmd_dry_run(args) -> int:
+    root = _root(args)
+    conn = connect_db(root)
+    try:
+        task_id = _resolve(conn, args.task_id)
+        room = conn.execute("SELECT * FROM rooms WHERE id=?", (task_id,)).fetchone()
+        if room is None:
+            return _emit(args, ok=False, error=f"room not found: {task_id}")
+        turn = room["turn"]
+        if not turn:
+            return _emit(args, ok=False, error="room has no current turn")
+        participants = [row["agent"] for row in conn.execute("SELECT agent FROM participants WHERE room_id=? ORDER BY agent", (task_id,)).fetchall()]
+        peer = peer_for(participants, turn)
+        from tui_relay import trigger_text
+
+        text = trigger_text(agent=turn, peer=peer, task_id=task_id, root=root, first_turn=int(room["round"]) == 0)
+    finally:
+        conn.close()
+    return _emit(args, ok=True, data={"task_id": task_id, "agent": turn, "peer": peer, "trigger_text": text})
 
 
 ARCHIVE_TABLES = (
@@ -1193,6 +1265,8 @@ def cmd_archive(args) -> int:
         transcript = archive_root / f"{task_id}.transcript.md"
         transcript.write_text(export_transcript_md(conn, root=root, room_id=task_id), encoding="utf-8", newline="\n")
 
+        if task_dir.exists():
+            shutil.rmtree(task_dir)
         conn.execute("BEGIN IMMEDIATE")
         try:
             conn.execute("DELETE FROM receipts WHERE message_id IN (SELECT id FROM messages WHERE room_id=?)", (task_id,))
@@ -1203,8 +1277,6 @@ def cmd_archive(args) -> int:
         except Exception:
             conn.execute("ROLLBACK")
             raise
-        if task_dir.exists():
-            shutil.rmtree(task_dir)
         return _emit(
             args,
             ok=True,
@@ -1593,6 +1665,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-iters", type=int)
     p.add_argument("--terminal-grace-s", type=float, default=30.0)
     p.set_defaults(func=cmd_watch_chat)
+
+    p = sub.add_parser("dry-run")
+    _common(p)
+    p.add_argument("--task-id", required=True)
+    p.set_defaults(func=cmd_dry_run)
 
     p = sub.add_parser("control-panel")
     _common(p)
