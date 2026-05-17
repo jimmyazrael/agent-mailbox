@@ -1,0 +1,19 @@
+{
+  "id": "AM-12",
+  "name": "Stale workspace cleanup",
+  "category": "recovery",
+  "difficulty": "hard",
+  "goal": "Terminal and orphaned agent-mailbox WezTerm workspaces can be identified and reaped without touching active task panes.",
+  "first_turn": "claude",
+  "timeout_seconds": 420,
+  "workspace_files": {
+    "README.md": "# Stale Workspace Cleanup\n\nThe cleanup path must be explicit, dry-run by default, and safe for active workspaces.\n",
+    "result.txt": "pending\n"
+  },
+  "context": "Exercise the stale workspace cleanup workflow. Verify that active workspaces are preserved, terminal or orphaned workspaces are listed in dry-run mode, and destructive cleanup requires explicit confirmation. Mark result.txt STALE-WORKSPACE-PASS only after both agents agree the safety behavior is correct.",
+  "success": {
+    "required_transcript_terms": ["STALE-WORKSPACE-PASS"],
+    "max_messages": 8,
+    "terminal_status": "final"
+  }
+}

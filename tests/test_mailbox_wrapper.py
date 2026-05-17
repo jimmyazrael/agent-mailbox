@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from agent_chat import connect_db, init_db
+from agent_chat import connect_db, init_db, send_message
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 MAILBOX = SKILL_ROOT / "scripts" / "mailbox.py"
@@ -989,6 +989,100 @@ def test_pause_stop_and_repair_rebind(tmp_path):
     assert _run("stop", "--root", str(root), "--task-id", task_id).returncode == 0
     conn = connect_db(root)
     assert conn.execute("SELECT status FROM rooms WHERE id=?", (task_id,)).fetchone()["status"] == "stopped"
+
+
+def test_status_detects_dead_watcher_in_running_state(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    conn.execute("UPDATE tui_relay_state SET watcher_pid=999999999, paused=0, pause_reason=NULL WHERE room_id=?", (task_id,))
+    conn.close()
+
+    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert status.returncode == 0, status.stderr
+    data = json.loads(status.stdout)["data"]
+    assert data["watcher_pid"] == 999999999
+    assert data["watcher_alive"] is False
+    assert data["watcher_dead_with_running_state"] is True
+
+
+def test_reap_stale_workspaces_dry_run_and_yes(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    active_task = json.loads(init.stdout)["data"]["task_id"]
+    stopped = _run("init", "--root", str(root), "--prefix", "done", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    stopped_task = json.loads(stopped.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    conn.execute("UPDATE rooms SET status='stopped' WHERE id=?", (stopped_task,))
+    conn.close()
+    panes = [
+        {"pane_id": 11, "workspace": f"agent-mailbox-{active_task}"},
+        {"pane_id": 22, "workspace": f"agent-mailbox-{stopped_task}"},
+        {"pane_id": 33, "workspace": "agent-mailbox-orphan"},
+        {"pane_id": 44, "workspace": "default"},
+    ]
+    calls = []
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(panes), "")
+        if "kill-pane" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(["reap-stale-workspaces", "--root", str(root), "--format", "json"])
+    assert mailbox_cli.cmd_reap_stale_workspaces(args) == 0
+    assert not any("kill-pane" in call for call in calls)
+
+    args = mailbox_cli.build_parser().parse_args(["reap-stale-workspaces", "--root", str(root), "--yes", "--format", "json"])
+    assert mailbox_cli.cmd_reap_stale_workspaces(args) == 0
+    killed = [" ".join(call) for call in calls if "kill-pane" in call]
+    assert any("22" in call for call in killed)
+    assert any("33" in call for call in killed)
+    assert not any("11" in call for call in killed)
+
+
+def test_archive_terminal_task_removes_live_rows_and_writes_archive(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    send_message(
+        conn,
+        root=root,
+        room_id=task_id,
+        from_agent="claude",
+        to_agent="codex",
+        kind="message",
+        status="final",
+        summary="done",
+        body="archive me",
+    )
+    conn.close()
+
+    archive = _run("archive", "--root", str(root), "--task-id", task_id, "--yes", "--format", "json")
+    assert archive.returncode == 0, archive.stderr
+    data = json.loads(archive.stdout)["data"]
+    assert Path(data["archive_db"]).is_file()
+    assert Path(data["transcript"]).is_file()
+    conn = connect_db(root)
+    assert conn.execute("SELECT id FROM rooms WHERE id=?", (task_id,)).fetchone() is None
+    import sqlite3
+
+    archived = sqlite3.connect(data["archive_db"])
+    archived.row_factory = sqlite3.Row
+    try:
+        assert archived.execute("SELECT id FROM rooms WHERE id=?", (task_id,)).fetchone() is not None
+        msg = archived.execute("SELECT body_text FROM messages WHERE room_id=?", (task_id,)).fetchone()
+        assert msg["body_text"] == "archive me"
+    finally:
+        archived.close()
 
 
 def test_repair_restart_agent_sends_resume_to_bound_pane(monkeypatch, tmp_path):

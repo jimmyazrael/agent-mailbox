@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agent_chat import (
+    DDL,
     ack_message,
     add_participant,
     connect_db,
@@ -743,6 +745,7 @@ def _format_panel_status(state: dict[str, Any]) -> str:
         f"Root: {state['root']}",
         f"Status: {room['status']}    Turn: {room['turn']}    Round: {room['round']}    Last message: {room['last_message_id']}",
         f"Paused: {bool(relay.get('paused', 0))}    Reason: {relay.get('pause_reason') or ''}",
+        f"Watcher: pid={relay.get('watcher_pid') or '<none>'}    alive={pid_exists(relay.get('watcher_pid'))}",
         f"Panes: {', '.join(f'{k}={v}' for k, v in sorted(panes.items())) or '(none)'}",
         f"Codex discovery: {sessions.get('codex', {}).get('discovery_status')}    Codex session: {sessions.get('codex', {}).get('session_id') or '<none>'}",
         "",
@@ -750,6 +753,8 @@ def _format_panel_status(state: dict[str, Any]) -> str:
         "",
         "Commands: r refresh | p pause | c resume | i inject | a agent actions | d rediscover Codex | s stop | q quit | ? help",
     ]
+    if relay.get("watcher_pid") and not pid_exists(relay.get("watcher_pid")) and room["status"] not in TERMINAL_ROOM_STATUSES and not bool(relay.get("paused", 0)):
+        lines.append("WARNING: relay watcher PID is dead while task is unpaused; run resume or restart the task watcher.")
     if room["status"] in TERMINAL_ROOM_STATUSES:
         lines.append("Room is terminal; mutation commands are disabled.")
     return "\n".join(lines)
@@ -1009,6 +1014,13 @@ def cmd_status(args) -> int:
             for row in conn.execute("SELECT * FROM agent_sessions WHERE room_id=?", (task_id,)).fetchall()
         }
         panes = {row["pane_role"]: row["pane_id"] for row in conn.execute("SELECT * FROM panes WHERE room_id=?", (task_id,))}
+        watcher_alive = pid_exists(relay["watcher_pid"])
+        watcher_dead_with_running_state = bool(
+            relay["watcher_pid"]
+            and not watcher_alive
+            and room["status"] not in TERMINAL_ROOM_STATUSES
+            and not bool(relay["paused"])
+        )
         data = {
             "task_id": task_id,
             "status": room["status"],
@@ -1017,13 +1029,197 @@ def cmd_status(args) -> int:
             "last_message_id": room["last_message_id"],
             "paused": bool(relay["paused"]),
             "pause_reason": relay["pause_reason"],
-            "watcher_alive": pid_exists(relay["watcher_pid"]),
+            "watcher_pid": relay["watcher_pid"],
+            "watcher_alive": watcher_alive,
+            "watcher_dead_with_running_state": watcher_dead_with_running_state,
             "panes": panes,
             "codex_discovery_status": sessions.get("codex", {}).get("discovery_status"),
         }
     finally:
         conn.close()
     return _emit(args, ok=True, data=data)
+
+
+def _workspace_task_id(workspace: str) -> str | None:
+    prefix = "agent-mailbox-"
+    return workspace[len(prefix):] if workspace.startswith(prefix) else None
+
+
+def cmd_reap_stale_workspaces(args) -> int:
+    root = _root(args)
+    init_db(root)
+    conn = connect_db(root)
+    try:
+        rooms = {
+            row["workspace"]: dict(row)
+            for row in conn.execute("SELECT id, workspace, status FROM rooms").fetchall()
+        }
+    finally:
+        conn.close()
+
+    from pane_control import build_kill_pane_argv, build_list_argv
+    from tui_launcher import find_wezterm, parse_wezterm_list
+
+    wez = find_wezterm()
+    rv = subprocess.run(
+        build_list_argv(wezterm_exe=wez),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=15,
+    )
+    rv.check_returncode()
+    panes = parse_wezterm_list(rv.stdout)
+    by_workspace: dict[str, list[int]] = {}
+    for pane in panes:
+        workspace = str(pane.get("workspace") or "")
+        if _workspace_task_id(workspace) is None:
+            continue
+        by_workspace.setdefault(workspace, []).append(int(pane["pane_id"]))
+
+    stale: list[dict[str, Any]] = []
+    killed: list[int] = []
+    for workspace, pane_ids in sorted(by_workspace.items()):
+        room = rooms.get(workspace)
+        reason = None
+        if room is None:
+            reason = "no_db_room"
+        elif room["status"] in TERMINAL_ROOM_STATUSES:
+            reason = f"terminal:{room['status']}"
+        if reason is None:
+            continue
+        entry = {
+            "workspace": workspace,
+            "task_id": room["id"] if room else _workspace_task_id(workspace),
+            "reason": reason,
+            "pane_ids": pane_ids,
+        }
+        stale.append(entry)
+        if args.yes:
+            for pane_id in pane_ids:
+                kill = subprocess.run(
+                    build_kill_pane_argv(wezterm_exe=wez, pane_id=pane_id),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15,
+                )
+                kill.check_returncode()
+                killed.append(pane_id)
+    return _emit(args, ok=True, data={"dry_run": not args.yes, "stale_workspaces": stale, "killed_pane_ids": killed})
+
+
+ARCHIVE_TABLES = (
+    "rooms",
+    "participants",
+    "agent_sessions",
+    "panes",
+    "tui_relay_state",
+    "messages",
+    "receipts",
+    "room_state",
+)
+
+
+def _copy_table_rows(src: sqlite3.Connection, dst: sqlite3.Connection, *, table: str, room_id: str) -> int:
+    if table == "receipts":
+        rows = src.execute(
+            "SELECT r.* FROM receipts r JOIN messages m ON m.id=r.message_id WHERE m.room_id=?",
+            (room_id,),
+        ).fetchall()
+    elif table == "messages":
+        rows = src.execute("SELECT * FROM messages WHERE room_id=? ORDER BY id", (room_id,)).fetchall()
+    elif table == "rooms":
+        rows = src.execute("SELECT * FROM rooms WHERE id=?", (room_id,)).fetchall()
+    else:
+        rows = src.execute(f"SELECT * FROM {table} WHERE room_id=?", (room_id,)).fetchall()
+    if not rows:
+        return 0
+    columns = rows[0].keys()
+    placeholders = ",".join("?" for _ in columns)
+    names = ",".join(columns)
+    dst.executemany(
+        f"INSERT OR REPLACE INTO {table}({names}) VALUES({placeholders})",
+        [tuple(row[col] for col in columns) for row in rows],
+    )
+    return len(rows)
+
+
+def cmd_archive(args) -> int:
+    root = _root(args)
+    conn = connect_db(root)
+    archive_conn: sqlite3.Connection | None = None
+    try:
+        task_id = _resolve(conn, args.task_id)
+        room = conn.execute("SELECT * FROM rooms WHERE id=?", (task_id,)).fetchone()
+        if room is None:
+            return _emit(args, ok=False, error=f"room not found: {task_id}")
+        if room["status"] not in TERMINAL_ROOM_STATUSES and not args.force:
+            return _emit(args, ok=False, error="archive requires a terminal room unless --force is set")
+        if not args.yes:
+            return _emit(args, ok=False, error="archive requires --yes")
+
+        archive_root = (args.archive_root or (root / "archives")).resolve()
+        archive_root.mkdir(parents=True, exist_ok=True)
+        archive_db = archive_root / f"{task_id}.sqlite"
+        if archive_db.exists() and not args.overwrite:
+            return _emit(args, ok=False, error=f"archive already exists: {archive_db}")
+        if archive_db.exists():
+            archive_db.unlink()
+
+        archive_conn = sqlite3.connect(str(archive_db), isolation_level=None)
+        archive_conn.row_factory = sqlite3.Row
+        archive_conn.execute("PRAGMA foreign_keys=ON")
+        archive_conn.executescript(DDL)
+        archive_conn.execute(
+            "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('schema_version', ?)",
+            (str(1),),
+        )
+
+        copied: dict[str, int] = {}
+        archive_conn.execute("BEGIN IMMEDIATE")
+        for table in ARCHIVE_TABLES:
+            copied[table] = _copy_table_rows(conn, archive_conn, table=table, room_id=task_id)
+        archive_conn.execute("COMMIT")
+
+        task_dir = root / task_id
+        archive_task_dir = archive_root / task_id
+        if archive_task_dir.exists():
+            shutil.rmtree(archive_task_dir)
+        if task_dir.exists():
+            shutil.copytree(task_dir, archive_task_dir)
+        transcript = archive_root / f"{task_id}.transcript.md"
+        transcript.write_text(export_transcript_md(conn, root=root, room_id=task_id), encoding="utf-8", newline="\n")
+
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute("DELETE FROM receipts WHERE message_id IN (SELECT id FROM messages WHERE room_id=?)", (task_id,))
+            for table in ("room_state", "tui_relay_state", "panes", "agent_sessions", "participants", "messages"):
+                conn.execute(f"DELETE FROM {table} WHERE room_id=?", (task_id,))
+            conn.execute("DELETE FROM rooms WHERE id=?", (task_id,))
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        if task_dir.exists():
+            shutil.rmtree(task_dir)
+        return _emit(
+            args,
+            ok=True,
+            data={
+                "task_id": task_id,
+                "archive_db": str(archive_db),
+                "archive_dir": str(archive_task_dir),
+                "transcript": str(transcript),
+                "copied": copied,
+            },
+        )
+    finally:
+        if archive_conn is not None:
+            archive_conn.close()
+        conn.close()
 
 
 def cmd_list(args) -> int:
@@ -1411,6 +1607,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--task-id", required=True)
     p.set_defaults(func=cmd_status)
 
+    p = sub.add_parser("reap-stale-workspaces")
+    _common(p)
+    p.add_argument("--yes", action="store_true", help="kill stale WezTerm panes; without this, only report what would be killed")
+    p.set_defaults(func=cmd_reap_stale_workspaces)
+
     p = sub.add_parser("list")
     _common(p)
     p.add_argument("--active-only", action="store_true")
@@ -1421,6 +1622,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--task-id", required=True)
     p.add_argument("--to", type=Path)
     p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("archive")
+    _common(p)
+    p.add_argument("--task-id", required=True)
+    p.add_argument("--archive-root", type=Path)
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--force", action="store_true", help="allow archiving a non-terminal task")
+    p.add_argument("--overwrite", action="store_true")
+    p.set_defaults(func=cmd_archive)
 
     p = sub.add_parser("ack")
     _common(p)
