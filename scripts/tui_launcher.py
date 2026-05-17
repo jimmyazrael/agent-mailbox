@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from pane_control import build_list_argv, build_spawn_argv, build_split_argv, build_start_argv
 
-WELL_KNOWN_PATHS = [
+WEZTERM_WELL_KNOWN_PATHS = [
     Path("C:/Program Files/WezTerm/wezterm.exe"),
     Path("C:/Program Files (x86)/WezTerm/wezterm.exe"),
     Path("/usr/local/bin/wezterm"),
@@ -22,10 +22,19 @@ def find_wezterm() -> Path:
     found = shutil.which("wezterm")
     if found:
         return Path(found)
-    for path in WELL_KNOWN_PATHS:
+    for path in WEZTERM_WELL_KNOWN_PATHS:
         if path.exists():
             return path
     raise FileNotFoundError("wezterm not found on PATH or in well-known install dirs")
+
+
+def find_codex() -> Path | None:
+    """Prefer the VS Code bundled Codex binary over stale npm shims on Windows."""
+    extension_roots = sorted((Path.home() / ".vscode" / "extensions").glob("openai.chatgpt-*/bin/windows-x86_64/codex.exe"))
+    if extension_roots:
+        return extension_roots[-1]
+    found = shutil.which("codex")
+    return Path(found) if found else None
 
 
 def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
@@ -110,7 +119,10 @@ def attach_workspace_gui(wezterm_exe: Path, workspace: str, cwd: Path) -> None:
     if os.name == "nt":
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
     subprocess.Popen(
-        build_start_argv(wezterm_exe=wezterm_exe, workspace=workspace, cwd=cwd, attach=True),
+        # On this Windows WezTerm build, `start --attach` requires an
+        # explicit domain. `unix` is the local mux domain name even on
+        # Windows for the default local multiplexer.
+        build_start_argv(wezterm_exe=wezterm_exe, workspace=workspace, cwd=cwd, attach=True, domain="unix"),
         creationflags=creationflags,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -125,6 +137,7 @@ def launch_workspace(
     cwd: Path,
     claude_cmd: List[str],
     codex_cmd: List[str],
+    env: Optional[dict[str, str]] = None,
 ) -> Dict[str, Any]:
     try:
         pre_ids = set(_list_pane_ids_in(wezterm_exe, workspace))
@@ -134,6 +147,7 @@ def launch_workspace(
         build_spawn_argv(wezterm_exe=wezterm_exe, workspace=workspace, cwd=cwd, cmd=claude_cmd),
         capture_output=True,
         text=True,
+        env=env,
     )
     rv.check_returncode()
     claude_id = _parse_pane_id(rv.stdout)
@@ -154,6 +168,7 @@ def launch_workspace(
         ),
         capture_output=True,
         text=True,
+        env=env,
     )
     rv2.check_returncode()
     codex_id = _parse_pane_id(rv2.stdout)

@@ -244,6 +244,49 @@ def test_post_accepts_v11_synonym_protocol_mode(tmp_path):
     )
     assert post.returncode == 0, post.stderr
     assert json.loads(post.stdout)["data"]["warnings"] == []
+    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert json.loads(status.stdout)["data"]["turn"] == "codex"
+
+
+def test_post_routes_execute_owner_to_owner_not_reviewer(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    body = "\n".join(
+        [
+            "Mode: EXECUTE",
+            "Coordinator: claude",
+            "Owner: codex",
+            "Reviewer: claude",
+            "Next action: Codex implements the feature.",
+            "Done when: Tests pass.",
+            "",
+            "Acknowledged. I will proceed and return with results.",
+        ]
+    )
+    post = _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "codex",
+        "--to",
+        "claude",
+        "--status",
+        "continue",
+        "--summary",
+        "ack",
+        "--body",
+        body,
+        "--format",
+        "json",
+    )
+    assert post.returncode == 0, post.stderr
+    assert json.loads(post.stdout)["data"]["warnings"] == []
+    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert json.loads(status.stdout)["data"]["turn"] == "codex"
 
 
 def test_post_rejects_arbitrary_protocol_mode(tmp_path):
@@ -391,6 +434,7 @@ def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_p
         return {"workspace": "w", "claude_pane_id": 11, "codex_pane_id": 12, "spawned_at": "now"}
 
     monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr("tui_launcher.find_codex", lambda: tmp_path / "codex.exe")
     monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
     monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
@@ -402,6 +446,7 @@ def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_p
     assert mailbox_cli.cmd_launch_tui(args) == 0
     codex_cmd = calls[0]["codex_cmd"]
     assert codex_cmd[-1] == ""
+    assert calls[0]["env"]["AGENT_MAILBOX_CODEX_EXE"] == str(tmp_path / "codex.exe")
     assert not any("read mailbox task" in part for part in codex_cmd)
 
 
@@ -424,6 +469,7 @@ def test_launch_tui_chat_uses_existing_window_id(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr("tui_launcher.find_codex", lambda: None)
     monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
     monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
@@ -464,6 +510,7 @@ def test_launch_tui_attaches_visible_gui_after_panes(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr("tui_launcher.find_codex", lambda: None)
     monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
     monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda wez, ws, cwd: attach_calls.append((wez, ws, cwd)))
@@ -813,6 +860,16 @@ def test_launch_control_panel_cmd_shape():
     assert "AGENT_MAILBOX_ROOT" in text
     assert "role=control" in text
     assert "cmd /k" in text
+
+
+def test_agent_pane_wrappers_call_nested_cmd_shims():
+    codex_text = (SKILL_ROOT / "scripts" / "launch_codex_pane.cmd").read_text(encoding="utf-8")
+    claude_text = (SKILL_ROOT / "scripts" / "launch_claude_pane.cmd").read_text(encoding="utf-8")
+    assert "call codex" in codex_text
+    assert "call claude" in claude_text
+    assert "AGENT_MAILBOX_CODEX_EXE" in codex_text
+    assert "cmd /k" in codex_text
+    assert "cmd /k" in claude_text
 
 
 def test_pause_stop_and_repair_rebind(tmp_path):

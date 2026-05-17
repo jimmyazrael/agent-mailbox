@@ -278,16 +278,21 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             chat_pane_id = parts[3] if getattr(args, "with_chat", False) and len(parts) > 3 else None
             control_pane_id = parts[4] if getattr(args, "with_control_panel", False) and len(parts) > 4 else None
         else:
-            from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_wezterm, launch_workspace
+            from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_codex, find_wezterm, launch_workspace
 
             wez = find_wezterm()
             ensure_mux_alive(wez)
+            codex_exe = find_codex()
+            env = os.environ.copy()
+            if codex_exe is not None:
+                env["AGENT_MAILBOX_CODEX_EXE"] = str(codex_exe)
             result = launch_workspace(
                 wezterm_exe=wez,
                 workspace=workspace,
                 cwd=project_cwd,
                 claude_cmd=claude_cmd,
                 codex_cmd=codex_cmd,
+                env=env,
             )
             relay_pane_id = None
             chat_pane_id = None
@@ -1135,11 +1140,11 @@ def cmd_stop(args) -> int:
         if not args.yes:
             return _emit(args, ok=False, error="--close-panes requires --yes")
         from tui_launcher import find_wezterm
-        from pane_control import build_send_text_argv
+        from pane_control import build_kill_pane_argv
 
         wez = find_wezterm()
         for pane_id in pane_ids:
-            subprocess.run(build_send_text_argv(wezterm_exe=wez, pane_id=pane_id, text="\x03exit\r"), capture_output=True, text=True)
+            subprocess.run(build_kill_pane_argv(wezterm_exe=wez, pane_id=pane_id), capture_output=True, text=True)
     return _emit(args, ok=True, data={"task_id": task_id, "status": "stopped"})
 
 

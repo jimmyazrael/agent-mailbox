@@ -12,6 +12,7 @@ from agent_chat import (
     init_db,
     init_room,
     list_rooms,
+    owner_from_protocol,
     peek_latest,
     read_unread,
     resolve_task_id,
@@ -95,6 +96,68 @@ def test_send_message_inline_artifact_and_body_read(tmp_path):
     assert room["turn"] == "claude"
     assert room["round"] == 2
     assert room["last_message_id"] == 2
+
+
+def test_continue_routes_to_protocol_owner_even_when_reviewer_is_recipient(tmp_path):
+    conn = _setup(tmp_path)
+    body = "\n".join(
+        [
+            "Mode: EXECUTE",
+            "Coordinator: claude",
+            "Owner: codex",
+            "Reviewer: claude",
+            "Next action: Codex implements the change.",
+            "Done when: tests pass.",
+            "",
+            "I will implement this.",
+        ]
+    )
+    send_message(
+        conn,
+        root=tmp_path,
+        room_id="t1",
+        from_agent="codex",
+        to_agent="claude",
+        kind="message",
+        status="continue",
+        summary="codex owns implementation",
+        body=body,
+    )
+    room = conn.execute("SELECT turn FROM rooms WHERE id='t1'").fetchone()
+    assert room["turn"] == "codex"
+
+
+def test_continue_ignores_non_participant_protocol_owner(tmp_path):
+    conn = _setup(tmp_path)
+    body = "\n".join(
+        [
+            "Mode: EXECUTE",
+            "Coordinator: claude",
+            "Owner: buildbot",
+            "Reviewer: claude",
+            "Next action: Buildbot does the impossible.",
+            "Done when: never.",
+        ]
+    )
+    send_message(
+        conn,
+        root=tmp_path,
+        room_id="t1",
+        from_agent="codex",
+        to_agent="claude",
+        kind="message",
+        status="continue",
+        summary="unknown owner",
+        body=body,
+    )
+    room = conn.execute("SELECT turn FROM rooms WHERE id='t1'").fetchone()
+    assert room["turn"] == "claude"
+
+
+def test_owner_from_protocol_handles_none_and_case():
+    assert owner_from_protocol("Mode: EXECUTE\nOwner: CoDeX\n") == "codex"
+    assert owner_from_protocol("Mode: DONE\nOwner: none\n") is None
+    assert owner_from_protocol("no owner") is None
 
 
 def test_send_message_rolls_back_artifact_on_db_failure(tmp_path, monkeypatch):

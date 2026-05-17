@@ -55,6 +55,10 @@ def _get_pane_text(wezterm_exe: Path, pane_id: int) -> str:
     return rv.stdout or ""
 
 
+def _pane_tail(text: str, lines: int = 12) -> str:
+    return "\n".join((text or "").splitlines()[-lines:])
+
+
 def _send_choice(wezterm_exe: Path, pane_id: int, text: str) -> None:
     subprocess.run(
         build_activate_pane_argv(wezterm_exe=wezterm_exe, pane_id=pane_id),
@@ -95,7 +99,7 @@ def _accept_trust_prompt(wezterm_exe: Path, pane_id: int, *, timeout_s: int = 12
 
 
 def _approve_if_prompted(wezterm_exe: Path, pane_id: int) -> bool:
-    text = _get_pane_text(wezterm_exe, pane_id).lower()
+    text = _pane_tail(_get_pane_text(wezterm_exe, pane_id)).lower()
     if "update available" in text and "skip until next version" in text:
         _send_choice(wezterm_exe, pane_id, "2\r")
         return True
@@ -347,6 +351,21 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
     return task_id, launch, wezterm_exe
 
 
+def _stop_real_task(mailbox_root: Path, task_id: str) -> None:
+    _run_mailbox(
+        "stop",
+        "--root",
+        str(mailbox_root),
+        "--task-id",
+        task_id,
+        "--close-panes",
+        "--yes",
+        "--format",
+        "json",
+        timeout=60,
+    )
+
+
 def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: bool = False) -> ScenarioResult:
     work_root = Path(tempfile.mkdtemp(prefix=f"agent_mailbox_eval_{scenario['id']}_"))
     project = work_root / "project"
@@ -357,6 +376,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
     context_path.write_text(scenario.get("context", ""), encoding="utf-8", newline="\n")
     notes: list[str] = []
     task_id: str | None = None
+    result: ScenarioResult | None = None
     try:
         start_args = [
             "init",
@@ -381,14 +401,17 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             try:
                 task_id, launch, wezterm_exe = _start_real_task(mailbox_root, project, scenario, context_path)
             except Exception as exc:
-                return ScenarioResult(scenario["id"], scenario["name"], "error", [str(exc)], str(work_root), task_id)
+                result = ScenarioResult(scenario["id"], scenario["name"], "error", [str(exc)], str(work_root), task_id)
+                return result
         else:
             rv = _run_mailbox(*start_args, timeout=120)
             if rv.returncode != 0:
-                return ScenarioResult(scenario["id"], scenario["name"], "error", [rv.stderr or rv.stdout], str(work_root), task_id)
+                result = ScenarioResult(scenario["id"], scenario["name"], "error", [rv.stderr or rv.stdout], str(work_root), task_id)
+                return result
             task_id = json.loads(rv.stdout)["data"]["task_id"]
         if not launch_real:
-            return ScenarioResult(scenario["id"], scenario["name"], "defined", ["scenario initialized only; pass --run-real to execute"], str(work_root), task_id)
+            result = ScenarioResult(scenario["id"], scenario["name"], "defined", ["scenario initialized only; pass --run-real to execute"], str(work_root), task_id)
+            return result
         terminal, observed_blocked = _poll_to_terminal(
             mailbox_root,
             task_id,
@@ -403,7 +426,8 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             work_root / "pane-snapshots",
         )
         if terminal != scenario.get("success", {}).get("terminal_status", "final"):
-            return ScenarioResult(scenario["id"], scenario["name"], "fail", [f"terminal status {terminal!r}"], str(work_root), task_id)
+            result = ScenarioResult(scenario["id"], scenario["name"], "fail", [f"terminal status {terminal!r}"], str(work_root), task_id)
+            return result
         conn = connect_db(mailbox_root)
         try:
             transcript = export_transcript_md(conn, root=mailbox_root, room_id=task_id)
@@ -427,8 +451,11 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
         for rel in success.get("forbidden_file_changes", []):
             if _file_fingerprint(project, rel) != fingerprints.get(rel):
                 notes.append(f"forbidden file changed: {rel}")
-        return ScenarioResult(scenario["id"], scenario["name"], "pass" if not notes else "fail", notes, str(work_root), task_id)
+        result = ScenarioResult(scenario["id"], scenario["name"], "pass" if not notes else "fail", notes, str(work_root), task_id)
+        return result
     finally:
+        if launch_real and task_id and (not keep or (result is not None and result.status != "pass")):
+            _stop_real_task(mailbox_root, task_id)
         if not keep and not launch_real:
             shutil.rmtree(work_root, ignore_errors=True)
 
@@ -437,7 +464,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run agent-mailbox behavioral scenarios")
     parser.add_argument("--scenario", help="Scenario id, e.g. AM-01")
     parser.add_argument("--run-real", action="store_true", help="Launch real Claude/Codex/WezTerm panes")
-    parser.add_argument("--keep", action="store_true", help="Keep temp workspace after run")
+    parser.add_argument("--keep", action="store_true", help="Keep temp workspace after run. Failed real runs still stop panes.")
     args = parser.parse_args()
     scenarios = _load_scenarios()
     if args.scenario:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -10,6 +11,7 @@ from mailbox_lib import TERMINAL_STATUSES, VALID_MESSAGE_STATUSES, VALID_ROOM_ST
 SCHEMA_VERSION = 1
 INLINE_BODY_THRESHOLD_BYTES = 4096
 ALLOWED_ROOM_STATE_KEYS = frozenset({"limits", "usage", "tags", "goal_metadata"})
+PROTOCOL_OWNER_RE = re.compile(r"(?im)^[ \t]*Owner[ \t]*:[ \t]*([^\r\n]*)[ \t]*$")
 
 DDL = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -248,6 +250,37 @@ def _write_artifact(root: Path, room_id: str, message_id: int, body: str) -> str
     return f"artifacts/msg-{message_id:06d}.md"
 
 
+def owner_from_protocol(body: str) -> Optional[str]:
+    match = PROTOCOL_OWNER_RE.search(body or "")
+    if not match:
+        return None
+    owner = match.group(1).strip().lower()
+    if owner in {"", "none", "n/a", "na", "-"}:
+        return None
+    return owner
+
+
+def _next_turn_from_continue(
+    conn: sqlite3.Connection,
+    *,
+    room_id: str,
+    from_agent: str,
+    to_agent: Optional[str],
+    body: str,
+    next_turn: Optional[str],
+) -> Optional[str]:
+    if next_turn is not None:
+        return next_turn
+    owner = owner_from_protocol(body)
+    if owner:
+        participants = {row["agent"] for row in conn.execute("SELECT agent FROM participants WHERE room_id=?", (room_id,)).fetchall()}
+        if owner in participants:
+            return owner
+    if to_agent == from_agent:
+        return from_agent
+    return to_agent
+
+
 def send_message(
     conn: sqlite3.Connection,
     *,
@@ -296,7 +329,14 @@ def send_message(
             artifact_path = root / room_id / rel_path
             conn.execute("UPDATE messages SET body_path=? WHERE id=?", (rel_path, message_id))
         if status == "continue":
-            new_turn = next_turn if next_turn is not None else to_agent
+            new_turn = _next_turn_from_continue(
+                conn,
+                room_id=room_id,
+                from_agent=from_agent,
+                to_agent=to_agent,
+                body=body,
+                next_turn=next_turn,
+            )
             conn.execute(
                 "UPDATE rooms SET turn=?, status='waiting', last_message_id=?, round=round+?, "
                 "blocked_reason=NULL, updated_at=? WHERE id=?",

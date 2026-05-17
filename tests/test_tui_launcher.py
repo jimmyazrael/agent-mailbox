@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from pane_control import build_spawn_argv
-from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_wezterm, launch_workspace, lookup_pane, parse_wezterm_list
+from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_codex, find_wezterm, launch_workspace, lookup_pane, parse_wezterm_list
 
 
 def test_find_wezterm_uses_path(monkeypatch, tmp_path):
@@ -58,8 +58,11 @@ def test_parse_and_lookup_wezterm_list():
     assert {p["pane_id"] for p in lookup_pane(panes, workspace="agent-mailbox-t1")} == {3}
 
 
-def test_launch_workspace_captures_pane_ids(monkeypatch, tmp_path):
+def test_launch_workspace_captures_pane_ids_and_passes_env(monkeypatch, tmp_path):
+    seen_env = []
+
     def fake_run(argv, **kwargs):
+        seen_env.append(kwargs.get("env"))
         if "spawn" in argv:
             return subprocess.CompletedProcess(argv, 0, "11\n", "")
         if "split-pane" in argv:
@@ -77,9 +80,23 @@ def test_launch_workspace_captures_pane_ids(monkeypatch, tmp_path):
         cwd=tmp_path,
         claude_cmd=["cmd", "/c", "claude.cmd"],
         codex_cmd=["cmd", "/c", "codex.cmd"],
+        env={"AGENT_MAILBOX_CODEX_EXE": "C:/codex.exe"},
     )
     assert result["claude_pane_id"] == 11
     assert result["codex_pane_id"] == 12
+    assert any(env and env["AGENT_MAILBOX_CODEX_EXE"] == "C:/codex.exe" for env in seen_env)
+
+
+def test_find_codex_prefers_latest_vscode_extension(monkeypatch, tmp_path):
+    old = tmp_path / ".vscode" / "extensions" / "openai.chatgpt-1" / "bin" / "windows-x86_64" / "codex.exe"
+    new = tmp_path / ".vscode" / "extensions" / "openai.chatgpt-2" / "bin" / "windows-x86_64" / "codex.exe"
+    old.parent.mkdir(parents=True)
+    new.parent.mkdir(parents=True)
+    old.write_bytes(b"")
+    new.write_bytes(b"")
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setattr("shutil.which", lambda name: "C:/stale/codex.cmd")
+    assert find_codex() == new
 
 
 def test_attach_workspace_gui_starts_visible_client(monkeypatch, tmp_path):
@@ -98,6 +115,7 @@ def test_attach_workspace_gui_starts_visible_client(monkeypatch, tmp_path):
     attach_workspace_gui(wez, "agent-mailbox-t1", tmp_path)
     argv, kwargs = calls[0]
     assert argv[:2] == [str(wez), "start"]
+    assert "--domain" in argv and "unix" in argv
     assert "--workspace" in argv and "agent-mailbox-t1" in argv
     assert "--attach" in argv
     assert "--cwd" in argv and str(tmp_path) in argv

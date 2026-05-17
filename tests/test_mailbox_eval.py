@@ -103,3 +103,33 @@ def test_mailbox_eval_terminal_room_skips_extra_trigger(monkeypatch, tmp_path):
     terminal, _ = mailbox_eval._poll_to_terminal(root, "t1", 1, {"extra_triggers": 1})
     assert terminal == "final"
     assert calls == []
+
+
+def test_mailbox_eval_failed_real_run_stops_task(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_start(mailbox_root, project, scenario, context_path):
+        return "t1", {"claude_pane_id": 1, "codex_pane_id": 2, "relay_pane_id": 3}, Path("wezterm")
+
+    def fake_run_mailbox(*args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, '{"ok": true}', "")
+
+    monkeypatch.setattr(mailbox_eval, "_start_real_task", fake_start)
+    monkeypatch.setattr(mailbox_eval, "_poll_to_terminal", lambda *args, **kwargs: ("timeout", False))
+    monkeypatch.setattr(mailbox_eval, "_capture_pane_snapshots", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mailbox_eval, "_run_mailbox", fake_run_mailbox)
+    result = mailbox_eval.run_scenario(
+        {
+            "id": "AM-X",
+            "name": "x",
+            "goal": "g",
+            "context": "c",
+            "workspace_files": {"a.txt": "a"},
+            "success": {"terminal_status": "final"},
+        },
+        keep=True,
+        launch_real=True,
+    )
+    assert result.status == "fail"
+    assert any(call[:2] == ("stop", "--root") and "--close-panes" in call for call in calls)

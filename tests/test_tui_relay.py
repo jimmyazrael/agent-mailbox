@@ -21,6 +21,7 @@ def test_run_once_triggers_only_once(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr("tui_relay.send_trigger", lambda **kwargs: calls.append(kwargs) or True)
     monkeypatch.setattr("tui_relay._pane_alive", lambda *args, **kwargs: True)
+    monkeypatch.setattr("tui_relay._pane_error_reason", lambda *args, **kwargs: None)
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "idle"
     assert len(calls) == 1
@@ -35,6 +36,19 @@ def test_run_once_first_turn_trigger_includes_first_turn_flag(monkeypatch, tmp_p
     monkeypatch.setattr("tui_relay._pane_alive", lambda *args, **kwargs: True)
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
     assert calls[0]["first_turn"] is True
+
+
+def test_run_once_pauses_when_triggered_agent_pane_reports_auth_error(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    send_message(conn, root=tmp_path, room_id="t1", from_agent="codex", to_agent="claude", kind="message", status="continue", summary="go", body="body")
+    monkeypatch.setattr("tui_relay.send_trigger", lambda **kwargs: True)
+    monkeypatch.setattr("tui_relay._pane_alive", lambda *args, **kwargs: True)
+    monkeypatch.setattr("tui_relay._pane_error_reason", lambda *args, **kwargs: "auth_unavailable")
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "agent_error"
+    relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id='t1'").fetchone()
+    assert relay["paused"] == 1
+    assert relay["pause_reason"] == "agent_error:claude:auth_unavailable"
 
 
 def test_run_once_first_turn_flag_after_context_bootstrap(monkeypatch, tmp_path):

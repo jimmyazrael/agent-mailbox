@@ -37,8 +37,12 @@ def build_start_argv(
     cwd: Optional[Path] = None,
     attach: bool = False,
     always_new_process: bool = False,
+    domain: Optional[str] = None,
 ) -> List[str]:
-    argv = [str(wezterm_exe), "start", "--workspace", workspace]
+    argv = [str(wezterm_exe), "start"]
+    if domain:
+        argv += ["--domain", domain]
+    argv += ["--workspace", workspace]
     if attach:
         argv.append("--attach")
     if always_new_process:
@@ -105,3 +109,7 @@ def build_get_text_argv(
 
 def build_activate_pane_argv(*, wezterm_exe: Path, pane_id: int, prefer_mux: bool = True) -> List[str]:
     return _base(wezterm_exe, prefer_mux) + ["activate-pane", "--pane-id", str(pane_id)]
+
+
+def build_kill_pane_argv(*, wezterm_exe: Path, pane_id: int, prefer_mux: bool = True) -> List[str]:
+    return _base(wezterm_exe, prefer_mux) + ["kill-pane", "--pane-id", str(pane_id)]

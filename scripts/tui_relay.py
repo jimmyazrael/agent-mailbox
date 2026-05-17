@@ -9,7 +9,7 @@ from typing import Optional
 
 from agent_chat import connect_db
 from mailbox_lib import TERMINAL_STATUSES, utc_now
-from pane_control import build_activate_pane_argv, build_list_argv, build_send_text_argv
+from pane_control import build_activate_pane_argv, build_get_text_argv, build_list_argv, build_send_text_argv
 from tui_launcher import lookup_pane, parse_wezterm_list
 
 
@@ -78,6 +78,37 @@ def _pane_alive(wezterm_exe: Path, pane_id: int) -> bool:
     return bool(lookup_pane(panes, pane_id=pane_id))
 
 
+def _pane_error_reason(wezterm_exe: Path, pane_id: int) -> Optional[str]:
+    rv = subprocess.run(
+        build_get_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, start_line=-30),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if rv.returncode != 0:
+        return None
+    text = (rv.stdout or "").lower()
+    if "auth_unavailable" in text or "no auth available" in text:
+        return "auth_unavailable"
+    if "403" in text and ("forbidden" in text or "unauthorized" in text):
+        return "auth_403"
+    if "unexpected status 503" in text or "service unavailable" in text:
+        return "service_unavailable"
+    if "is not recognized as an internal or external command" in text:
+        return "trigger_landed_in_shell"
+    return None
+
+
+def _pause_relay(conn, task_id: str, reason: str) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",
+        (reason, task_id),
+    )
+    conn.execute("COMMIT")
+
+
 def _peer_for_agent(conn, room_id: str, agent: str) -> str:
     rows = conn.execute("SELECT agent FROM participants WHERE room_id=? ORDER BY agent", (room_id,)).fetchall()
     peers = [row["agent"] for row in rows if row["agent"] != agent]
@@ -107,26 +138,25 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
         last_message_id = int(room["last_message_id"])
         first_turn = int(room["round"]) == 0
         if state and state["last_triggered_turn"] == turn and int(state["last_triggered_message_id"]) == last_message_id:
+            pane = conn.execute(
+                "SELECT pane_id FROM panes WHERE room_id=? AND pane_role=?",
+                (task_id, turn),
+            ).fetchone()
+            if pane is not None and pane["pane_id"] is not None:
+                error_reason = _pane_error_reason(wezterm_exe, int(pane["pane_id"]))
+                if error_reason:
+                    _pause_relay(conn, task_id, f"agent_error:{turn}:{error_reason}")
+                    return "agent_error"
             return "idle"
         pane = conn.execute(
             "SELECT pane_id FROM panes WHERE room_id=? AND pane_role=?",
             (task_id, turn),
         ).fetchone()
         if pane is None or pane["pane_id"] is None:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",
-                (f"pane_id_missing:{turn}", task_id),
-            )
-            conn.execute("COMMIT")
+            _pause_relay(conn, task_id, f"pane_id_missing:{turn}")
             return "missing_pane"
         if not _pane_alive(wezterm_exe, int(pane["pane_id"])):
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",
-                (f"panes_lost:{turn}", task_id),
-            )
-            conn.execute("COMMIT")
+            _pause_relay(conn, task_id, f"panes_lost:{turn}")
             return "panes_lost"
         peer = _peer_for_agent(conn, task_id, turn)
         if not send_trigger(
@@ -138,12 +168,7 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             root=root,
             first_turn=first_turn,
         ):
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",
-                (f"trigger_failed:{turn}", task_id),
-            )
-            conn.execute("COMMIT")
+            _pause_relay(conn, task_id, f"trigger_failed:{turn}")
             return "send_failed"
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(

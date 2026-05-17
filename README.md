@@ -16,7 +16,7 @@ By default, `mailbox.py start` opens a WezTerm workspace with:
 
 The chat transcript and control panel are default-on. Use `--no-chat` or `--no-control-panel` only when you explicitly do not want them.
 
-`start` and `launch-tui` are expected to surface a visible WezTerm GUI window for the task workspace. If a workspace exists only in the mux and no window is visible, that is a launcher bug; run `wezterm start --workspace <workspace> --attach` as a manual recovery.
+`start` and `launch-tui` are expected to surface a visible WezTerm GUI window for the task workspace. If a workspace exists only in the mux and no window is visible, that is a launcher bug; run `wezterm start --domain unix --workspace <workspace> --attach` as a manual recovery.
 
 ## Requirements
 
