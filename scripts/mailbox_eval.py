@@ -297,6 +297,10 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         # environments do not, so this is best-effort rather than required.
         _accept_trust_prompt(wezterm_exe, int(launch[pane_key]))
 
+    # The relay poll interval defaults to 2s. Keep it alive for at least the
+    # scenario timeout plus margin; otherwise real agents can be mid-turn when
+    # the relay exits and the room will stall in "waiting".
+    relay_max_iters = max(60, int(scenario.get("timeout_seconds", 420)) // 2 + 60)
     relay_cmd = [
         "cmd",
         "/c",
@@ -305,7 +309,7 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         str(mailbox_root),
         str(project),
         str(MAILBOX),
-        "60",
+        str(relay_max_iters),
     ]
     relay_rv = subprocess.run(
         build_split_argv(
