@@ -1088,6 +1088,97 @@ def test_reap_stale_workspaces_tolerates_wezterm_list_timeout(monkeypatch, tmp_p
     assert '"stale_workspaces": []' in captured.out
 
 
+def test_doctor_wezterm_enumerates_processes_and_workspaces(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    workspace = conn.execute("SELECT workspace FROM rooms WHERE id=?", (task_id,)).fetchone()["workspace"]
+    conn.close()
+    monkeypatch.setattr(mailbox_cli, "_list_processes", lambda: [
+        {"pid": 1, "name": "wezterm-mux-server.exe", "command_line": "mux"},
+        {"pid": 2, "name": "wezterm.exe", "command_line": "wezterm cli --prefer-mux list --format json"},
+    ])
+    monkeypatch.setattr(mailbox_cli, "_wezterm_mux_panes", lambda wez: ([{"pane_id": 11, "workspace": workspace}, {"pane_id": 12, "workspace": "default"}], None))
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+
+    args = mailbox_cli.build_parser().parse_args(["doctor-wezterm", "--root", str(root), "--format", "json"])
+    assert mailbox_cli.cmd_doctor_wezterm(args) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["mux_responsive"] is True
+    assert data["mux_cli_helper_count"] == 1
+    assert data["agent_mailbox_workspaces"][0]["workspace"] == workspace
+    assert data["agent_mailbox_workspaces"][0]["room"]["status"] == "waiting"
+
+
+def test_doctor_wezterm_falls_back_when_mux_unresponsive(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    monkeypatch.setattr(mailbox_cli, "_list_processes", lambda: [{"pid": 1, "name": "wezterm.exe", "command_line": "wezterm cli --prefer-mux list"}])
+    monkeypatch.setattr(mailbox_cli, "_wezterm_mux_panes", lambda wez: ([], "wezterm cli timed out"))
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    args = mailbox_cli.build_parser().parse_args(["doctor-wezterm", "--root", str(tmp_path / "mb"), "--format", "json"])
+    assert mailbox_cli.cmd_doctor_wezterm(args) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["mux_responsive"] is False
+    assert data["mux_error"] == "wezterm cli timed out"
+    assert data["mux_cli_helper_count"] == 1
+
+
+def test_reset_wezterm_requires_scope_flag(tmp_path):
+    rv = _run("reset-wezterm", "--root", str(tmp_path / "mb"), "--format", "json")
+    assert rv.returncode == 2
+    assert "choose exactly one scope" in json.loads(rv.stdout)["error"]
+
+
+def test_reset_wezterm_dry_run_kills_nothing(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    killed = []
+    monkeypatch.setattr(mailbox_cli.os, "getpid", lambda: 999)
+    monkeypatch.setattr(mailbox_cli, "_run_taskkill_tree", lambda pid: killed.append(pid) or True)
+    monkeypatch.setattr(mailbox_cli, "_list_processes", lambda: [
+        {"pid": 111, "name": "wezterm.exe", "command_line": "wezterm start --workspace agent-mailbox-t1"},
+    ])
+    args = mailbox_cli.build_parser().parse_args(["reset-wezterm", "--root", str(tmp_path / "mb"), "--task-scoped", "--dry-run", "--format", "json"])
+    assert mailbox_cli.cmd_reset_wezterm(args) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["planned"][0]["pid"] == 111
+    assert data["killed_process_ids"] == []
+    assert killed == []
+
+
+def test_reset_wezterm_task_scoped_excludes_global_mux(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    monkeypatch.setattr(mailbox_cli, "_list_processes", lambda: [
+        {"pid": 1, "name": "wezterm-mux-server.exe", "command_line": "wezterm-mux-server.exe"},
+        {"pid": 2, "name": "wezterm.exe", "command_line": "wezterm start --workspace agent-mailbox-t1"},
+    ])
+    args = mailbox_cli.build_parser().parse_args(["reset-wezterm", "--root", str(tmp_path / "mb"), "--task-scoped", "--dry-run", "--format", "json"])
+    assert mailbox_cli.cmd_reset_wezterm(args) == 0
+    planned = json.loads(capsys.readouterr().out)["data"]["planned"]
+    assert [p["pid"] for p in planned] == [2]
+
+
+def test_reset_wezterm_global_requires_yes_global(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    monkeypatch.setattr(mailbox_cli, "_list_processes", lambda: [{"pid": 1, "name": "wezterm-mux-server.exe", "command_line": "mux"}])
+    args = mailbox_cli.build_parser().parse_args(["reset-wezterm", "--root", str(tmp_path / "mb"), "--global", "--yes", "--format", "json"])
+    assert mailbox_cli.cmd_reset_wezterm(args) == 2
+    assert "--yes-global" in json.loads(capsys.readouterr().out)["error"]
+    killed = []
+    monkeypatch.setattr(mailbox_cli, "_run_taskkill_tree", lambda pid: killed.append(pid) or True)
+    args = mailbox_cli.build_parser().parse_args(["reset-wezterm", "--root", str(tmp_path / "mb"), "--global", "--yes-global", "--format", "json"])
+    assert mailbox_cli.cmd_reset_wezterm(args) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["killed_process_ids"] == [1]
+    assert killed == [1]
+
+
 def test_archive_terminal_task_removes_live_rows_and_writes_archive(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")

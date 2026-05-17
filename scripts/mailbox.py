@@ -108,19 +108,12 @@ def _run_taskkill_tree(pid: int) -> bool:
     return rv.returncode == 0
 
 
-def _kill_task_scoped_processes(*, task_id: str, workspace: str, root: Path, project_cwd: Path) -> list[int]:
+def _list_processes() -> list[dict[str, Any]]:
     if os.name != "nt":
         return []
-    tokens = {
-        task_id.lower(),
-        workspace.lower(),
-        str(root).lower(),
-        str(project_cwd).lower(),
-    }
-    killed: list[int] = []
     ps = (
         "Get-CimInstance Win32_Process | "
-        "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+        "Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress"
     )
     try:
         rv = subprocess.run(
@@ -141,18 +134,61 @@ def _kill_task_scoped_processes(*, task_id: str, workspace: str, root: Path, pro
     except json.JSONDecodeError:
         return []
     rows = data if isinstance(data, list) else [data]
+    out: list[dict[str, Any]] = []
     for row in rows:
+        if not isinstance(row, dict):
+            continue
         try:
             pid = int(row.get("ProcessId"))
-        except (TypeError, ValueError, AttributeError):
+        except (TypeError, ValueError):
             continue
+        out.append(
+            {
+                "pid": pid,
+                "name": str(row.get("Name") or ""),
+                "command_line": str(row.get("CommandLine") or ""),
+            }
+        )
+    return out
+
+
+def _wezterm_processes(processes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    names = {"wezterm.exe", "wezterm-gui.exe", "wezterm-mux-server.exe"}
+    return [p for p in processes if str(p.get("name") or "").lower() in names]
+
+
+def _is_mux_cli_helper(proc: dict[str, Any]) -> bool:
+    return "cli --prefer-mux list" in str(proc.get("command_line") or "").lower()
+
+
+def _is_agent_mailbox_process(proc: dict[str, Any]) -> bool:
+    command = str(proc.get("command_line") or "").lower()
+    return "agent-mailbox-" in command or "agent_mailbox_eval_" in command or _is_mux_cli_helper(proc)
+
+
+def _kill_task_scoped_pids(processes: list[dict[str, Any]], *, tokens: set[str]) -> list[int]:
+    killed: list[int] = []
+    for proc in processes:
+        pid = int(proc["pid"])
         if pid == os.getpid():
             continue
-        command = str(row.get("CommandLine") or "").lower()
+        command = str(proc.get("command_line") or "").lower()
         if command and any(token and token in command for token in tokens):
             if _run_taskkill_tree(pid):
                 killed.append(pid)
     return killed
+
+
+def _kill_task_scoped_processes(*, task_id: str, workspace: str, root: Path, project_cwd: Path) -> list[int]:
+    if os.name != "nt":
+        return []
+    tokens = {
+        task_id.lower(),
+        workspace.lower(),
+        str(root).lower(),
+        str(project_cwd).lower(),
+    }
+    return _kill_task_scoped_pids(_list_processes(), tokens=tokens)
 
 
 def _root(args) -> Path:
@@ -1243,6 +1279,147 @@ def cmd_reap_stale_workspaces(args) -> int:
     return _emit(args, ok=True, data={"dry_run": not args.yes, "stale_workspaces": stale, "killed_pane_ids": killed})
 
 
+def _wezterm_mux_panes(wezterm_exe: Path) -> tuple[list[dict[str, Any]], str | None]:
+    from pane_control import build_list_argv
+    from tui_launcher import parse_wezterm_list, run_wezterm_cli
+
+    rv = run_wezterm_cli(build_list_argv(wezterm_exe=wezterm_exe), timeout=5)
+    if rv.returncode != 0:
+        return [], (rv.stderr or rv.stdout or f"wezterm list failed rc={rv.returncode}").strip()
+    try:
+        return parse_wezterm_list(rv.stdout), None
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        return [], f"wezterm list parse failed: {exc}"
+
+
+def _workspace_room_status(root: Path, workspace: str) -> dict[str, Any]:
+    if not root.exists():
+        return {"found": False, "status": None, "task_id": _workspace_task_id(workspace)}
+    try:
+        conn = connect_db(root)
+    except sqlite3.Error:
+        return {"found": False, "status": None, "task_id": _workspace_task_id(workspace)}
+    try:
+        row = conn.execute("SELECT id, status FROM rooms WHERE workspace=?", (workspace,)).fetchone()
+        if row is None:
+            return {"found": False, "status": None, "task_id": _workspace_task_id(workspace)}
+        return {"found": True, "status": row["status"], "task_id": row["id"]}
+    finally:
+        conn.close()
+
+
+def cmd_doctor_wezterm(args) -> int:
+    root = _root(args)
+    processes = _list_processes()
+    wezterm_processes = _wezterm_processes(processes)
+    mux_helpers = [p for p in wezterm_processes if _is_mux_cli_helper(p)]
+    from tui_launcher import find_wezterm
+
+    panes, mux_error = _wezterm_mux_panes(find_wezterm())
+    by_workspace: dict[str, list[dict[str, Any]]] = {}
+    for pane in panes:
+        workspace = str(pane.get("workspace") or "")
+        by_workspace.setdefault(workspace, []).append(pane)
+    agent_workspaces = []
+    for workspace, rows in sorted(by_workspace.items()):
+        if _workspace_task_id(workspace) is None:
+            continue
+        room = _workspace_room_status(root, workspace)
+        agent_workspaces.append(
+            {
+                "workspace": workspace,
+                "pane_ids": [int(row["pane_id"]) for row in rows if "pane_id" in row],
+                "room": room,
+            }
+        )
+    data = {
+        "root": str(root),
+        "mux_responsive": mux_error is None,
+        "mux_error": mux_error,
+        "wezterm_processes": wezterm_processes,
+        "mux_cli_helpers": mux_helpers,
+        "mux_cli_helper_count": len(mux_helpers),
+        "workspaces": sorted(by_workspace.keys()),
+        "agent_mailbox_workspaces": agent_workspaces,
+    }
+    return _emit(args, ok=True, data=data)
+
+
+def _reset_plan(processes: list[dict[str, Any]], *, task_scoped: bool, global_scope: bool, task_tokens: set[str] | None = None) -> list[dict[str, Any]]:
+    plan: list[dict[str, Any]] = []
+    tokens = {token.lower() for token in (task_tokens or set()) if token}
+    for proc in _wezterm_processes(processes):
+        pid = int(proc["pid"])
+        if pid == os.getpid():
+            continue
+        name = str(proc.get("name") or "").lower()
+        command = str(proc.get("command_line") or "").lower()
+        reason = None
+        if global_scope:
+            reason = "global_wezterm"
+        elif tokens and any(token in command for token in tokens):
+            reason = "task_id_scope"
+        elif task_scoped and _is_agent_mailbox_process(proc):
+            reason = "task_scoped"
+        if reason:
+            plan.append({**proc, "reason": reason})
+    plan.sort(key=lambda p: (0 if str(p.get("name") or "").lower() == "wezterm-mux-server.exe" else 1, int(p["pid"])))
+    return plan
+
+
+def _task_reset_tokens(root: Path, task_id: str | None) -> set[str]:
+    if not task_id:
+        return set()
+    conn = connect_db(root)
+    try:
+        resolved = _resolve(conn, task_id)
+        row = conn.execute("SELECT id, workspace, project_cwd FROM rooms WHERE id=?", (resolved,)).fetchone()
+        if row is None:
+            return {resolved.lower(), f"agent-mailbox-{resolved}".lower()}
+        return {
+            str(row["id"]).lower(),
+            str(row["workspace"]).lower(),
+            str(root).lower(),
+            str(row["project_cwd"]).lower(),
+        }
+    finally:
+        conn.close()
+
+
+def cmd_reset_wezterm(args) -> int:
+    scopes = [bool(args.task_scoped), bool(args.task_id), bool(args.global_scope)]
+    if sum(scopes) != 1:
+        return _emit(args, ok=False, error="choose exactly one scope: --task-scoped, --task-id <id>, or --global")
+    if args.global_scope and not args.yes_global:
+        return _emit(args, ok=False, error="--global kills WezTerm mux/client processes and requires --yes-global")
+    if not args.dry_run and not args.yes and not args.yes_global:
+        return _emit(args, ok=False, error="specify --dry-run to preview or --yes to execute")
+    root = _root(args)
+    processes = _list_processes()
+    tokens = _task_reset_tokens(root, args.task_id) if args.task_id else set()
+    plan = _reset_plan(
+        processes,
+        task_scoped=bool(args.task_scoped),
+        global_scope=bool(args.global_scope),
+        task_tokens=tokens,
+    )
+    killed: list[int] = []
+    if not args.dry_run:
+        for proc in plan:
+            if _run_taskkill_tree(int(proc["pid"])):
+                killed.append(int(proc["pid"]))
+    return _emit(
+        args,
+        ok=True,
+        data={
+            "dry_run": bool(args.dry_run),
+            "scope": "global" if args.global_scope else ("task_id" if args.task_id else "task_scoped"),
+            "planned": plan,
+            "killed_process_ids": killed,
+        },
+    )
+
+
 def cmd_dry_run(args) -> int:
     root = _root(args)
     conn = connect_db(root)
@@ -1798,6 +1975,20 @@ def build_parser() -> argparse.ArgumentParser:
     _common(p)
     p.add_argument("--yes", action="store_true", help="kill stale WezTerm panes; without this, only report what would be killed")
     p.set_defaults(func=cmd_reap_stale_workspaces)
+
+    p = sub.add_parser("doctor-wezterm")
+    _common(p)
+    p.set_defaults(func=cmd_doctor_wezterm)
+
+    p = sub.add_parser("reset-wezterm")
+    _common(p)
+    p.add_argument("--task-scoped", action="store_true", help="target Agent Mailbox-shaped WezTerm processes only")
+    p.add_argument("--task-id", help="target one known task using its task id/root/workspace/project path")
+    p.add_argument("--global", dest="global_scope", action="store_true", help="target all WezTerm mux/client processes")
+    p.add_argument("--dry-run", action="store_true", help="preview processes without killing them")
+    p.add_argument("--yes", action="store_true", help="execute non-global reset")
+    p.add_argument("--yes-global", action="store_true", help="execute global reset; kills the WezTerm mux and clients")
+    p.set_defaults(func=cmd_reset_wezterm)
 
     p = sub.add_parser("list")
     _common(p)

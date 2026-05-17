@@ -210,6 +210,17 @@ The mailbox stores Claude's pre-minted session id, Codex's discovered session id
 
 The repair command intentionally does not support `--use-last-codex-session` even with `--yes`; if you must fall back to the most recent Codex session, run `codex resume --last` manually inside a pane.
 
+### Recovery From A Degraded WezTerm Mux
+
+Symptom: `wezterm cli --prefer-mux list --format json` times out or hangs.
+
+1. Run `python <skill>\scripts\mailbox.py doctor-wezterm --format json` to inspect WezTerm processes, mux responsiveness, stuck CLI helpers, and Agent Mailbox-shaped workspaces.
+2. Preview task-scoped cleanup with `python <skill>\scripts\mailbox.py reset-wezterm --task-scoped --dry-run --format json`.
+3. If the plan only contains Agent Mailbox or stuck mux-list helper processes, run `python <skill>\scripts\mailbox.py reset-wezterm --task-scoped --yes --format json`.
+4. Re-run `doctor-wezterm` and the mux health command.
+5. If still degraded, preview global cleanup with `reset-wezterm --global --dry-run`. Do not execute global cleanup without explicit user approval; execution requires `--yes-global` and kills the WezTerm mux/client processes.
+6. Do not chain repeated `wezterm start --always-new-process` restarts. If task-scoped cleanup and one fresh start do not recover the mux, stop and investigate.
+
 ## Accident Handling
 
 When the user reports that an agent crashed, got stuck, hit 403/auth/rate-limit errors, needs approval, or is going in the wrong direction:
