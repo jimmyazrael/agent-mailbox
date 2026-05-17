@@ -50,6 +50,21 @@ def test_mailbox_eval_initializes_scenario_without_real_agents():
     assert result["task_id"]
 
 
+def test_run_mailbox_accepts_env_overrides(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs["env"])
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    mailbox_eval._run_mailbox(
+        "status",
+        env_overrides={"AGENT_MAILBOX_CLAUDE_PERMISSION_MODE": "bypassPermissions"},
+    )
+    assert seen["AGENT_MAILBOX_CLAUDE_PERMISSION_MODE"] == "bypassPermissions"
+
+
 def test_mailbox_eval_extra_trigger_targets_current_turn(monkeypatch, tmp_path):
     root = tmp_path / "mb"
     init_db(root)

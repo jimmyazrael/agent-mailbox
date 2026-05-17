@@ -32,9 +32,12 @@ class ScenarioResult:
     task_id: str | None = None
 
 
-def _run_mailbox(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+def _run_mailbox(*args: str, timeout: int = 120, env_overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     # Real TUI launches can leave descendant processes holding inherited pipe
     # handles. Capturing through temp files waits only for the direct child.
+    env = os.environ.copy()
+    if env_overrides:
+        env.update(env_overrides)
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as stdout, tempfile.TemporaryFile(
         "w+", encoding="utf-8", errors="replace"
     ) as stderr:
@@ -48,6 +51,7 @@ def _run_mailbox(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[
                 errors="replace",
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,
+                env=env,
             )
         except subprocess.TimeoutExpired:
             stdout.seek(0)
@@ -320,6 +324,12 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         raise RuntimeError(_command_error(rv))
     task_id = json.loads(rv.stdout)["data"]["task_id"]
 
+    eval_env = {
+        "AGENT_MAILBOX_CLAUDE_PERMISSION_MODE": os.environ.get(
+            "AGENT_MAILBOX_CLAUDE_PERMISSION_MODE",
+            "bypassPermissions",
+        )
+    }
     launch_rv = _run_mailbox(
         "launch-tui",
         "--root",
@@ -331,6 +341,7 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         "--format",
         "json",
         timeout=120,
+        env_overrides=eval_env,
     )
     if launch_rv.returncode != 0:
         raise RuntimeError(_command_error(launch_rv))
