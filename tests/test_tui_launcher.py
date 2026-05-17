@@ -221,6 +221,40 @@ def test_launch_workspace_uses_live_pane_diff_when_stdout_id_is_invalid(monkeypa
     assert result["codex_pane_id"] == 12
 
 
+def test_launch_workspace_waits_for_panes_to_appear_in_list(monkeypatch, tmp_path):
+    list_payloads = [
+        [],
+        [],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}, {"pane_id": 12, "workspace": "agent-mailbox-t1"}],
+    ]
+
+    def fake_run(argv, **kwargs):
+        if "spawn" in argv:
+            return subprocess.CompletedProcess(argv, 0, "1\n", "")
+        if "split-pane" in argv:
+            return subprocess.CompletedProcess(argv, 0, "2\n", "")
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(list_payloads.pop(0)), "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    wez = tmp_path / "wezterm.exe"
+    wez.write_bytes(b"")
+    result = launch_workspace(
+        wezterm_exe=wez,
+        workspace="agent-mailbox-t1",
+        cwd=tmp_path,
+        claude_cmd=["cmd", "/c", "claude.cmd"],
+        codex_cmd=["cmd", "/c", "codex.cmd"],
+    )
+    assert result["claude_pane_id"] == 11
+    assert result["codex_pane_id"] == 12
+
+
 def test_find_codex_prefers_latest_vscode_extension(monkeypatch, tmp_path):
     old = tmp_path / ".vscode" / "extensions" / "openai.chatgpt-1" / "bin" / "windows-x86_64" / "codex.exe"
     new = tmp_path / ".vscode" / "extensions" / "openai.chatgpt-2" / "bin" / "windows-x86_64" / "codex.exe"

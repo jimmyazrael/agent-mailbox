@@ -253,6 +253,30 @@ def _resolve_new_pane_id(*, label: str, stdout: str, before: set[int], after: se
     return next(iter(new_ids))
 
 
+def _wait_for_new_pane_id(
+    *,
+    label: str,
+    stdout: str,
+    before: set[int],
+    list_ids,
+    timeout_s: float = 5.0,
+) -> int:
+    deadline = time.time() + timeout_s
+    last_after: set[int] = set()
+    last_error: Exception | None = None
+    while time.time() < deadline:
+        try:
+            last_after = set(list_ids())
+            return _resolve_new_pane_id(label=label, stdout=stdout, before=before, after=last_after)
+        except RuntimeError as exc:
+            last_error = exc
+            time.sleep(0.25)
+    raise RuntimeError(
+        f"unable to identify new {label} pane after {timeout_s}s: "
+        f"stdout={_parse_pane_id(stdout)!r} new_ids={last_after - before} last_error={last_error}"
+    )
+
+
 def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
     _debug_timing(f"list_pane_ids start workspace={workspace}")
     rv = subprocess.run(
@@ -318,8 +342,12 @@ def launch_workspace(
     if rv.returncode != 0:
         _raise_cli_error("spawn claude", rv)
     _debug_timing("launch_workspace:spawn claude done")
-    claude_ids = set(_list_pane_ids_in(wezterm_exe, workspace))
-    claude_id = _resolve_new_pane_id(label="claude", stdout=rv.stdout, before=pre_ids, after=claude_ids)
+    claude_id = _wait_for_new_pane_id(
+        label="claude",
+        stdout=rv.stdout,
+        before=pre_ids,
+        list_ids=lambda: _list_pane_ids_in(wezterm_exe, workspace),
+    )
     pre_codex = set(_list_pane_ids_in(wezterm_exe, workspace))
     _debug_timing("launch_workspace:split codex start")
     rv2 = subprocess.run(
@@ -340,8 +368,12 @@ def launch_workspace(
     if rv2.returncode != 0:
         _raise_cli_error("split codex", rv2)
     _debug_timing("launch_workspace:split codex done")
-    codex_ids = set(_list_pane_ids_in(wezterm_exe, workspace))
-    codex_id = _resolve_new_pane_id(label="codex", stdout=rv2.stdout, before=pre_codex, after=codex_ids)
+    codex_id = _wait_for_new_pane_id(
+        label="codex",
+        stdout=rv2.stdout,
+        before=pre_codex,
+        list_ids=lambda: _list_pane_ids_in(wezterm_exe, workspace),
+    )
     return {
         "workspace": workspace,
         "claude_pane_id": claude_id,
