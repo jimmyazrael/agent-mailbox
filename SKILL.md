@@ -9,6 +9,59 @@ Use this skill for two-agent collaboration where Codex and Claude Code should di
 
 ## Quick Start
 
+## Day-To-Day Invocation
+
+The user should not need to remember mailbox flags or a context checklist. When the user says something like:
+
+```text
+Start agent-mailbox for <task>.
+Start communication with Claude Code about <task>.
+Use two agents to review/implement <task>.
+```
+
+the orchestrator agent should:
+
+1. Infer the project root from the current workspace unless the user names another path.
+2. Inspect obvious local context first: repo instructions (`CLAUDE.md`, `AGENTS.md`, `README.md`), relevant plans/specs/docs named by the user, and `git status`.
+3. Write a concise bootstrap context file under the temp directory, e.g. `F:\tmp\agent-mailbox-context-<slug>.md`.
+4. Start `mailbox.py start` with that context file. Do not ask the user to manually craft the context unless required information is missing.
+5. Tell the user the task id, mailbox root, and that WezTerm now contains Claude, Codex, relay, and chat transcript views.
+
+Bootstrap context file template:
+
+```text
+# Agent Mailbox Bootstrap Context
+
+Goal:
+- <one concrete outcome>
+
+Project:
+- root: <absolute project path>
+- current branch/status summary: <short git status summary>
+
+Relevant Files:
+- <path>: <why it matters>
+
+Constraints:
+- <must follow>
+- <must not touch>
+- <verification limits, remote-only caveats, approvals needed>
+
+Suggested Workflow:
+- First turn: <claude|codex> should <review/design/implement>
+- Peer should <review/implement/verify>
+- Use the role/mode protocol and assign one owner per non-terminal round.
+
+Done Criteria:
+- <observable completion condition>
+- <tests/scenarios/commands expected, or explicitly note if unavailable>
+```
+
+Default first turn:
+
+- Use `claude` for broad design review, ambiguity reduction, or second-opinion planning.
+- Use `codex` for direct local implementation when the required change is already clear.
+
 From the orchestrator session, start a task:
 
 ```powershell

@@ -13,6 +13,16 @@ def test_skill_md_documents_quick_start():
     assert "--project-cwd" in text
 
 
+def test_skill_md_documents_day_to_day_context_bootstrap():
+    text = SKILL_MD.read_text(encoding="utf-8")
+    assert "Day-To-Day Invocation" in text
+    assert "Bootstrap context file template" in text
+    assert "Relevant Files:" in text
+    assert "Constraints:" in text
+    assert "Done Criteria:" in text
+    assert "Do not ask the user to manually craft the context" in text
+
+
 def test_skill_md_documents_statuses_and_recovery():
     text = SKILL_MD.read_text(encoding="utf-8")
     for status in ("continue", "blocked", "final", "error"):
