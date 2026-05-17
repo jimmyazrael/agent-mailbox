@@ -92,27 +92,17 @@ def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
     _debug_timing(f"ensure_mux_alive:list initial done rc={rv.returncode}")
     if rv.returncode == 0:
         return
-    mux_exe = wezterm_exe.parent / ("wezterm-mux-server.exe" if os.name == "nt" else "wezterm-mux-server")
-    if mux_exe.exists():
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | 0x08000000
-        subprocess.Popen(
-            [str(mux_exe), "start"],
-            creationflags=creationflags,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-        )
-    else:
-        subprocess.Popen(
-            [str(wezterm_exe), "start", "--always-new-process"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-        )
+    # Starting wezterm-mux-server.exe directly on Windows can create a headless
+    # mux that `wezterm cli spawn` talks to, while `wezterm cli list` observes a
+    # different/default domain. Start through wezterm itself so the GUI and mux
+    # agree on the domain.
+    subprocess.Popen(
+        [str(wezterm_exe), "start", "--always-new-process"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
     deadline = time.time() + max_wait_s
     last_error = rv.stderr
     while time.time() < deadline:
