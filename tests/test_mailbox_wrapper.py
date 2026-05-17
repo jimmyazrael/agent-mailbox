@@ -1167,6 +1167,11 @@ def test_reset_wezterm_global_requires_yes_global(monkeypatch, tmp_path, capsys)
     import mailbox as mailbox_cli
 
     monkeypatch.setattr(mailbox_cli, "_list_processes", lambda: [{"pid": 1, "name": "wezterm-mux-server.exe", "command_line": "mux"}])
+    args = mailbox_cli.build_parser().parse_args(["reset-wezterm", "--root", str(tmp_path / "mb"), "--global", "--dry-run", "--format", "json"])
+    assert mailbox_cli.cmd_reset_wezterm(args) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["planned"][0]["pid"] == 1
+    assert data["killed_process_ids"] == []
     args = mailbox_cli.build_parser().parse_args(["reset-wezterm", "--root", str(tmp_path / "mb"), "--global", "--yes", "--format", "json"])
     assert mailbox_cli.cmd_reset_wezterm(args) == 2
     assert "--yes-global" in json.loads(capsys.readouterr().out)["error"]

@@ -1390,7 +1390,7 @@ def cmd_reset_wezterm(args) -> int:
     scopes = [bool(args.task_scoped), bool(args.task_id), bool(args.global_scope)]
     if sum(scopes) != 1:
         return _emit(args, ok=False, error="choose exactly one scope: --task-scoped, --task-id <id>, or --global")
-    if args.global_scope and not args.yes_global:
+    if args.global_scope and not args.dry_run and not args.yes_global:
         return _emit(args, ok=False, error="--global kills WezTerm mux/client processes and requires --yes-global")
     if not args.dry_run and not args.yes and not args.yes_global:
         return _emit(args, ok=False, error="specify --dry-run to preview or --yes to execute")
