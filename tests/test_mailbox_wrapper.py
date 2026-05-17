@@ -685,6 +685,7 @@ def test_start_warns_about_stale_workspaces_without_reaping(monkeypatch, tmp_pat
     assert mailbox_cli.cmd_start(args) == 0
     captured = capsys.readouterr()
     assert "stale agent-mailbox workspaces detected" in captured.err
+    assert "agent-mailbox-orphan" in captured.err
     assert killed == []
 
 
@@ -1095,6 +1096,41 @@ def test_status_reports_pending_user_injections(tmp_path):
     status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
     assert json.loads(status.stdout)["data"]["pending_user_injections"] == 1
 
+    ack = _run("ack", "--root", str(root), "--task-id", task_id, "--agent", "claude", "--message-id", str(message_id), "--format", "json")
+    assert ack.returncode == 0, ack.stderr
+    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert json.loads(status.stdout)["data"]["pending_user_injections"] == 0
+
+
+def test_bootstrap_context_does_not_count_as_pending_user_injection(tmp_path):
+    root = tmp_path / "mb"
+    init = _run(
+        "init",
+        "--root",
+        str(root),
+        "--prefix",
+        "t",
+        "--goal",
+        "g",
+        "--project-cwd",
+        str(tmp_path),
+        "--context",
+        "bootstrap context should not count as an injection",
+        "--format",
+        "json",
+    )
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+
+    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert json.loads(status.stdout)["data"]["pending_user_injections"] == 0
+    panel = _run("control-panel", "--root", str(root), "--task-id", task_id, "--once")
+    assert "Pending user injections: 0" in panel.stdout
+
+    inject = _run("inject", "--root", str(root), "--task-id", task_id, "--content", "real guidance", "--format", "json")
+    assert inject.returncode == 0, inject.stderr
+    message_id = json.loads(inject.stdout)["data"]["message_id"]
+    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
+    assert json.loads(status.stdout)["data"]["pending_user_injections"] == 1
     ack = _run("ack", "--root", str(root), "--task-id", task_id, "--agent", "claude", "--message-id", str(message_id), "--format", "json")
     assert ack.returncode == 0, ack.stderr
     status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")

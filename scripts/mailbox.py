@@ -357,8 +357,11 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             try:
                 stale = _find_stale_workspaces(wezterm_exe=wez, rooms=_rooms_by_workspace(conn))
                 if stale:
+                    names = [entry["workspace"] for entry in stale[:3]]
+                    suffix = f" and {len(stale) - 3} more" if len(stale) > 3 else ""
                     print(
                         f"warning: {len(stale)} stale agent-mailbox workspaces detected. "
+                        f"({', '.join(names)}{suffix}). "
                         "Run 'mailbox.py reap-stale-workspaces' to clean up.",
                         file=sys.stderr,
                     )
@@ -737,6 +740,7 @@ def _read_panel_state(root: Path, task_id: str) -> dict[str, Any]:
                     "SELECT COUNT(*) AS n FROM messages m "
                     "LEFT JOIN receipts r ON r.message_id=m.id AND r.agent=? "
                     "WHERE m.room_id=? AND m.from_agent='user' "
+                    "AND m.kind != 'system' "
                     "AND (m.to_agent=? OR m.to_agent='broadcast' OR m.to_agent IS NULL) "
                     "AND r.ack_at IS NULL",
                     (room["turn"], resolved, room["turn"]),
@@ -1053,6 +1057,7 @@ def cmd_status(args) -> int:
                     "SELECT COUNT(*) AS n FROM messages m "
                     "LEFT JOIN receipts r ON r.message_id=m.id AND r.agent=? "
                     "WHERE m.room_id=? AND m.from_agent='user' "
+                    "AND m.kind != 'system' "
                     "AND (m.to_agent=? OR m.to_agent='broadcast' OR m.to_agent IS NULL) "
                     "AND r.ack_at IS NULL",
                     (room["turn"], task_id, room["turn"]),
