@@ -86,6 +86,14 @@ def _common(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--format", choices=["human", "json"], default="human")
 
 
+def _chat_flags(subparser: argparse.ArgumentParser) -> None:
+    group = subparser.add_mutually_exclusive_group()
+    group.add_argument("--with-chat", dest="with_chat", action="store_true", help="open the read-only chat transcript view (default)")
+    group.add_argument("--no-chat", dest="with_chat", action="store_false", help="do not open the chat transcript view")
+    subparser.set_defaults(with_chat=True)
+    subparser.add_argument("--chat-poll-interval-s", type=float, default=1.5)
+
+
 def _resolve(conn, task_id: str) -> str:
     return resolve_task_id(conn, task_id)
 
@@ -876,8 +884,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--exit-condition")
     p.add_argument("--max-rounds", type=int, default=30)
     p.add_argument("--max-iters", type=int)
-    p.add_argument("--with-chat", action="store_true")
-    p.add_argument("--chat-poll-interval-s", type=float, default=1.5)
+    _chat_flags(p)
     p.add_argument("--context")
     p.add_argument("--context-file", type=Path)
     p.set_defaults(func=cmd_start)
@@ -887,8 +894,7 @@ def build_parser() -> argparse.ArgumentParser:
         _common(p)
         p.add_argument("--task-id", required=True)
         if name == "launch-tui":
-            p.add_argument("--with-chat", action="store_true")
-            p.add_argument("--chat-poll-interval-s", type=float, default=1.5)
+            _chat_flags(p)
         if name == "tui-relay":
             p.add_argument("--poll-interval-s", type=float, default=2.0)
             p.add_argument("--max-iters", type=int)

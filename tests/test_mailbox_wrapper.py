@@ -176,19 +176,22 @@ def test_launch_tui_fake_panes(monkeypatch, tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
     task_id = json.loads(init.stdout)["data"]["task_id"]
-    env = dict(**__import__("os").environ, AGENT_MAILBOX_FAKE_PANE_IDS="11,12", AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"))
+    env = dict(**__import__("os").environ, AGENT_MAILBOX_FAKE_PANE_IDS="11,12,13,14", AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"))
     rv = _run("launch-tui", "--root", str(root), "--task-id", task_id, "--format", "json", env=env)
     assert rv.returncode == 0, rv.stderr
     data = json.loads(rv.stdout)["data"]
     assert data["claude_pane_id"] == 11
+    assert data["chat_pane_id"] == 14
     conn = connect_db(root)
     assert conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='relay'", (task_id,)).fetchone() is None
+    chat = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='chat'", (task_id,)).fetchone()
+    assert chat["pane_id"] == 14
     relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
     assert relay["paused"] == 0
     assert relay["pause_reason"] is None
 
 
-def test_launch_tui_with_chat_fake_pane_is_opt_in(tmp_path):
+def test_launch_tui_no_chat_disables_chat_fake_pane(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
     task_id = json.loads(init.stdout)["data"]["task_id"]
@@ -197,13 +200,13 @@ def test_launch_tui_with_chat_fake_pane_is_opt_in(tmp_path):
         AGENT_MAILBOX_FAKE_PANE_IDS="11,12,13,14",
         AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"),
     )
-    rv = _run("launch-tui", "--root", str(root), "--task-id", task_id, "--with-chat", "--format", "json", env=env)
+    rv = _run("launch-tui", "--root", str(root), "--task-id", task_id, "--no-chat", "--format", "json", env=env)
     assert rv.returncode == 0, rv.stderr
     data = json.loads(rv.stdout)["data"]
-    assert data["chat_pane_id"] == 14
+    assert data["chat_pane_id"] is None
     conn = connect_db(root)
     chat = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='chat'", (task_id,)).fetchone()
-    assert chat["pane_id"] == 14
+    assert chat is None
 
 
 def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_path):
@@ -223,7 +226,7 @@ def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_p
 
     import mailbox as mailbox_cli
 
-    args = mailbox_cli.build_parser().parse_args(["launch-tui", "--root", str(root), "--task-id", task_id, "--format", "json"])
+    args = mailbox_cli.build_parser().parse_args(["launch-tui", "--root", str(root), "--task-id", task_id, "--no-chat", "--format", "json"])
     assert mailbox_cli.cmd_launch_tui(args) == 0
     codex_cmd = calls[0]["codex_cmd"]
     assert codex_cmd[-1] == ""
@@ -234,7 +237,7 @@ def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
     root = tmp_path / "mb"
     env = dict(
         **__import__("os").environ,
-        AGENT_MAILBOX_FAKE_PANE_IDS="21,22,23",
+        AGENT_MAILBOX_FAKE_PANE_IDS="21,22,23,24",
         AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"),
     )
     rv = _run(
@@ -260,9 +263,11 @@ def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
     conn = connect_db(root)
     relay = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='relay'", (task_id,)).fetchone()
     assert relay["pane_id"] == 23
+    chat = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='chat'", (task_id,)).fetchone()
+    assert chat["pane_id"] == 24
 
 
-def test_start_with_chat_binds_chat_fake_pane(tmp_path):
+def test_start_no_chat_disables_chat_fake_pane(tmp_path):
     root = tmp_path / "mb"
     env = dict(
         **__import__("os").environ,
@@ -279,7 +284,7 @@ def test_start_with_chat_binds_chat_fake_pane(tmp_path):
         "g",
         "--project-cwd",
         str(tmp_path),
-        "--with-chat",
+        "--no-chat",
         "--format",
         "json",
         env=env,
@@ -289,7 +294,7 @@ def test_start_with_chat_binds_chat_fake_pane(tmp_path):
     conn = connect_db(root)
     panes = {row["pane_role"]: row["pane_id"] for row in conn.execute("SELECT * FROM panes WHERE room_id=?", (task_id,))}
     assert panes["relay"] == 23
-    assert panes["chat"] == 24
+    assert "chat" not in panes
 
 
 def test_watch_chat_emits_existing_messages_without_mutating_state(tmp_path):

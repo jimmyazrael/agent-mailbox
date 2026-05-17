@@ -15,12 +15,12 @@ From the orchestrator session, start a task:
 python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py start --prefix spc --label "phase 2 review" --goal "Review the design and converge on fixes" --project-cwd F:\Programs\LocalAgentConcept --first-turn codex --context-file F:\tmp\spc-context.md
 ```
 
-This opens a WezTerm workspace with Claude, Codex, and relay panes. The bootstrap session returns immediately; the panes are the live interface.
+This opens a WezTerm workspace with Claude, Codex, relay, and read-only chat transcript views. The bootstrap session returns immediately; the panes are the live interface.
 
-Add `--with-chat` to also open a read-only chat transcript tab/pane:
+Use `--no-chat` only when you explicitly do not want the transcript monitor:
 
 ```powershell
-python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py start --prefix spc --label "phase 2 review" --goal "Review the design and converge on fixes" --project-cwd F:\Programs\LocalAgentConcept --first-turn codex --context-file F:\tmp\spc-context.md --with-chat
+python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py start --prefix spc --label "phase 2 review" --goal "Review the design and converge on fixes" --project-cwd F:\Programs\LocalAgentConcept --first-turn codex --context-file F:\tmp\spc-context.md --no-chat
 ```
 
 Use `--context-file` or `--context` for serious tasks. The context should state scope, relevant files, constraints, done criteria, and what must not be touched. It is stored as a bootstrap mailbox message so fresh TUI sessions do not have to infer project background from scratch.
