@@ -23,9 +23,24 @@ the orchestrator agent should:
 
 1. Infer the project root from the current workspace unless the user names another path.
 2. Inspect obvious local context first: repo instructions (`CLAUDE.md`, `AGENTS.md`, `README.md`), relevant plans/specs/docs named by the user, and `git status`.
-3. Write a concise bootstrap context file under the temp directory, e.g. `F:\tmp\agent-mailbox-context-<slug>.md`.
-4. Start `mailbox.py start` with that context file. Do not ask the user to manually craft the context unless required information is missing.
-5. Tell the user the task id, mailbox root, and that WezTerm now contains Claude, Codex, relay, and chat transcript views.
+3. Ask the user concise clarification questions before launching if required information is missing or risky to assume.
+4. Write a concise bootstrap context file under the temp directory, e.g. `F:\tmp\agent-mailbox-context-<slug>.md`.
+5. Start `mailbox.py start` with that context file. Do not ask the user to manually craft the context unless required information is missing.
+6. Tell the user the task id, mailbox root, and that WezTerm now contains Claude, Codex, relay, and chat transcript views.
+
+Clarification gate:
+
+Ask before launching when any of these are unclear:
+
+- The concrete goal or expected output.
+- The project root or target files.
+- Whether agents should review, implement, or both.
+- Whether edits are allowed.
+- Files, directories, commands, or environments that must not be touched.
+- Destructive, expensive, remote-only, credentialed, or approval-requiring operations.
+- The done criteria or verification expectations.
+
+Keep questions short and grouped. Prefer 1-3 questions. Do not ask if a reasonable safe default exists and the task can proceed read-only.
 
 Bootstrap context file template:
 
