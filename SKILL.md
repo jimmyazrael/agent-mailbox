@@ -181,6 +181,19 @@ The mailbox stores Claude's pre-minted session id, Codex's discovered session id
 
 The repair command intentionally does not support `--use-last-codex-session` even with `--yes`; if you must fall back to the most recent Codex session, run `codex resume --last` manually inside a pane.
 
+## Accident Handling
+
+When the user reports that an agent crashed, got stuck, hit 403/auth/rate-limit errors, needs approval, or is going in the wrong direction:
+
+- Start with `mailbox.py status --root <root> --task-id <id>`.
+- Use `pause` before manual inspection or credential/approval fixes.
+- Use `inject` to provide corrective guidance or tell the active agent to summarize what it is waiting on.
+- Use `resume` after panes, credentials, or approvals are fixed.
+- Use `repair --rediscover-codex` if Codex session metadata is missing after Codex has posted at least once.
+- Use `stop` for a hard stop; add `--close-panes --yes` only when the user explicitly wants panes closed.
+
+For detailed user-facing commands, see `README.md` "Accident Playbook".
+
 ## MUST NOT
 
 Agents inside panes must not write directly to `agent-chat.sqlite` or artifact files. Use `mailbox post`.

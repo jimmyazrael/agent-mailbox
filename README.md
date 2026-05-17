@@ -79,6 +79,72 @@ python scripts\mailbox.py resume --root <root> --task-id <id>
 
 The mailbox stores Claude session metadata, discovered Codex session metadata, WezTerm pane ids, and the immutable workspace name. It does not automatically use `codex resume --last`; that fallback remains manual.
 
+## Accident Playbook
+
+Start with status:
+
+```powershell
+python scripts\mailbox.py status --root <root> --task-id <id>
+```
+
+If an agent looks stuck:
+
+```powershell
+python scripts\mailbox.py inject --root <root> --task-id <id> --target next --content "You appear stuck. Summarize current state, say what you are waiting on, and either continue or post blocked."
+```
+
+If you need to stop the automation but keep panes open:
+
+```powershell
+python scripts\mailbox.py pause --root <root> --task-id <id> --reason "user inspection"
+```
+
+Resume after inspection:
+
+```powershell
+python scripts\mailbox.py resume --root <root> --task-id <id>
+```
+
+If one TUI pane crashed or was closed:
+
+```powershell
+python scripts\mailbox.py resume --root <root> --task-id <id>
+```
+
+If Codex cannot be resumed because its session id is missing, try rediscovery after Codex has posted at least once:
+
+```powershell
+python scripts\mailbox.py repair --root <root> --task-id <id> --rediscover-codex
+python scripts\mailbox.py resume --root <root> --task-id <id>
+```
+
+If an agent hits a 403, auth failure, rate limit, or approval wall:
+
+```powershell
+python scripts\mailbox.py pause --root <root> --task-id <id> --reason "auth or approval issue"
+```
+
+Then fix the issue directly in the affected TUI pane or outside the mailbox. After it is resolved:
+
+```powershell
+python scripts\mailbox.py inject --root <root> --task-id <id> --target next --content "Auth/approval issue is resolved. Continue from the latest mailbox state."
+python scripts\mailbox.py resume --root <root> --task-id <id>
+```
+
+If the agents are going in the wrong direction:
+
+```powershell
+python scripts\mailbox.py inject --root <root> --task-id <id> --target next --content "Correction: <new guidance>. Stop the previous direction and restate the new plan before continuing."
+```
+
+If you need a hard stop:
+
+```powershell
+python scripts\mailbox.py stop --root <root> --task-id <id>
+```
+
+Add `--close-panes --yes` only when you also want the WezTerm panes closed.
+
 ## Validation
 
 Tagged releases:

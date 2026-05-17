@@ -33,6 +33,15 @@ def test_skill_md_documents_statuses_and_recovery():
     assert re.search(r"crash|recover|restart", text, re.IGNORECASE)
 
 
+def test_skill_md_documents_accident_handling():
+    text = SKILL_MD.read_text(encoding="utf-8")
+    assert "Accident Handling" in text
+    assert "403" in text
+    assert "pause" in text
+    assert "inject" in text
+    assert "repair --rediscover-codex" in text
+
+
 def test_skill_md_has_must_not_list():
     text = SKILL_MD.read_text(encoding="utf-8")
     assert "MUST NOT" in text
