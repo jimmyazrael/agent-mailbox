@@ -106,3 +106,44 @@ def test_run_once_respects_db_only_user_inject(monkeypatch, tmp_path):
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
     assert len(calls) == 1
     assert not (tmp_path / "t1" / "outbox" / "user").exists()
+
+
+def test_run_once_pauses_when_completed_session_has_no_outbox(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    conn.execute("INSERT OR REPLACE INTO agent_sessions(room_id, agent, session_id, session_name) VALUES('t1', 'claude', 'claude-1', 's')")
+    calls = []
+    monkeypatch.setattr("tui_relay_v2.send_doorbell", lambda **kwargs: calls.append(kwargs) or True)
+    monkeypatch.setattr("tui_relay_v2._pane_alive", lambda *args, **kwargs: True)
+    monkeypatch.setattr("tui_relay_v2.MISSING_OUTBOX_GRACE_S", 0.0)
+    monkeypatch.setattr("session_logs.find_session_log", lambda **kwargs: tmp_path / "claude.jsonl")
+    monkeypatch.setattr(
+        "session_logs.latest_completed_turn",
+        lambda path, agent: {"path": str(path), "timestamp": "t", "text": "done", "hash": "h1", "mtime": 1},
+    )
+
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "missing_outbox_after_turn"
+    relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id='t1'").fetchone()
+    assert relay["paused"] == 1
+    assert relay["pause_reason"] == "missing_outbox_after_turn:claude"
+
+
+def test_run_once_marks_session_completion_handled_after_outbox(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    conn.execute("INSERT OR REPLACE INTO agent_sessions(room_id, agent, session_id, session_name) VALUES('t1', 'codex', 'codex-1', 's')")
+    path = tmp_path / "t1" / "outbox" / "codex" / "000001.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_outbox_text(), encoding="utf-8")
+    monkeypatch.setattr("tui_relay_v2.send_doorbell", lambda **kwargs: True)
+    monkeypatch.setattr("tui_relay_v2._pane_alive", lambda *args, **kwargs: True)
+    monkeypatch.setattr("tui_relay_v2.MISSING_OUTBOX_GRACE_S", 0.0)
+    monkeypatch.setattr("session_logs.find_session_log", lambda **kwargs: tmp_path / "codex.jsonl")
+    monkeypatch.setattr(
+        "session_logs.latest_completed_turn",
+        lambda path, agent: {"path": str(path), "timestamp": "t", "text": "done", "hash": "handled", "mtime": 1},
+    )
+
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "idle"
+    relay = conn.execute("SELECT paused FROM tui_relay_state WHERE room_id='t1'").fetchone()
+    assert relay["paused"] == 0

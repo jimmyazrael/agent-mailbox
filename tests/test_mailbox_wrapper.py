@@ -1208,10 +1208,14 @@ def test_reap_stale_workspaces_dry_run_and_yes(monkeypatch, tmp_path):
 
     args = mailbox_cli.build_parser().parse_args(["reap-stale-workspaces", "--root", str(root), "--yes", "--format", "json"])
     assert mailbox_cli.cmd_reap_stale_workspaces(args) == 0
-    killed = [" ".join(call) for call in calls if "kill-pane" in call]
-    assert any("22" in call for call in killed)
-    assert any("33" in call for call in killed)
-    assert not any("11" in call for call in killed)
+    killed = [
+        call[call.index("--pane-id") + 1]
+        for call in calls
+        if "kill-pane" in call and "--pane-id" in call
+    ]
+    assert "22" in killed
+    assert "33" in killed
+    assert "11" not in killed
 
 
 def test_reap_stale_workspaces_tolerates_wezterm_list_timeout(monkeypatch, tmp_path, capsys):

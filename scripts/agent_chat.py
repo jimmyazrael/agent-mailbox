@@ -10,7 +10,7 @@ from mailbox_lib import TERMINAL_STATUSES, VALID_MESSAGE_STATUSES, VALID_ROOM_ST
 
 SCHEMA_VERSION = 1
 INLINE_BODY_THRESHOLD_BYTES = 4096
-ALLOWED_ROOM_STATE_KEYS = frozenset({"limits", "usage", "tags", "goal_metadata"})
+ALLOWED_ROOM_STATE_KEYS = frozenset({"limits", "usage", "tags", "goal_metadata", "session_log_safety"})
 PROTOCOL_OWNER_RE = re.compile(r"(?im)^[ \t]*Owner[ \t]*:[ \t]*([^\r\n]*)[ \t]*$")
 
 DDL = """

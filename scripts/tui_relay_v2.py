@@ -13,6 +13,8 @@ from outbox import OutboxError, import_outbox_messages, next_outbox_path
 from pane_control import build_activate_pane_argv, build_list_argv, build_send_text_argv
 from tui_launcher import lookup_pane, parse_wezterm_list
 
+MISSING_OUTBOX_GRACE_S = 30.0
+
 
 def doorbell_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
     write_path = next_outbox_path(root, task_id, agent)
@@ -100,6 +102,55 @@ def _peer_for_agent(conn, room_id: str, agent: str) -> str:
     return peers[0]
 
 
+def _session_safety_state(conn, room_id: str) -> dict:
+    from agent_chat import room_state_get
+
+    value = room_state_get(conn, room_id, "session_log_safety", default={})
+    return value if isinstance(value, dict) else {}
+
+
+def _set_session_safety_state(conn, room_id: str, state: dict) -> None:
+    from agent_chat import room_state_set
+
+    room_state_set(conn, room_id, "session_log_safety", state)
+
+
+def _check_missing_outbox_after_completion(conn, *, root: Path, task_id: str, agent: str, now: float) -> Optional[str]:
+    from session_logs import find_session_log, latest_completed_turn
+
+    room = conn.execute("SELECT project_cwd FROM rooms WHERE id=?", (task_id,)).fetchone()
+    session = conn.execute(
+        "SELECT session_id FROM agent_sessions WHERE room_id=? AND agent=?",
+        (task_id, agent),
+    ).fetchone()
+    if room is None or session is None or not session["session_id"]:
+        return None
+    log_path = find_session_log(agent=agent, session_id=session["session_id"], project_cwd=Path(room["project_cwd"]))
+    if log_path is None:
+        return None
+    latest = latest_completed_turn(log_path, agent=agent)
+    if latest is None:
+        return None
+    state = _session_safety_state(conn, task_id)
+    agent_state = state.get(agent) if isinstance(state.get(agent), dict) else {}
+    latest_hash = latest["hash"]
+    if agent_state.get("handled_completion_hash") == latest_hash:
+        return None
+    if agent_state.get("completion_hash") != latest_hash:
+        agent_state = {
+            "completion_hash": latest_hash,
+            "first_seen_monotonic": now,
+            "session_path": latest["path"],
+            "session_timestamp": latest.get("timestamp"),
+        }
+        state[agent] = agent_state
+        _set_session_safety_state(conn, task_id, state)
+        return f"missing_outbox_after_turn:{agent}" if MISSING_OUTBOX_GRACE_S <= 0 else None
+    if now - float(agent_state.get("first_seen_monotonic", now)) < MISSING_OUTBOX_GRACE_S:
+        return None
+    return f"missing_outbox_after_turn:{agent}"
+
+
 def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
     conn = connect_db(root)
     try:
@@ -117,6 +168,29 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             _pause_relay(conn, task_id, f"malformed_outbox:{exc.reason}")
             return "malformed_outbox"
         if imported:
+            from session_logs import find_session_log, latest_completed_turn
+
+            safety = _session_safety_state(conn, task_id)
+            room_for_logs = conn.execute("SELECT project_cwd FROM rooms WHERE id=?", (task_id,)).fetchone()
+            for item in imported:
+                msg = item["message"]
+                agent_state = safety.get(msg.from_agent) if isinstance(safety.get(msg.from_agent), dict) else {}
+                agent_state["last_outbox_message_id"] = int(item["message_id"])
+                session = conn.execute(
+                    "SELECT session_id FROM agent_sessions WHERE room_id=? AND agent=?",
+                    (task_id, msg.from_agent),
+                ).fetchone()
+                if room_for_logs is not None and session is not None and session["session_id"]:
+                    log_path = find_session_log(
+                        agent=msg.from_agent,
+                        session_id=session["session_id"],
+                        project_cwd=Path(room_for_logs["project_cwd"]),
+                    )
+                    latest = latest_completed_turn(log_path, agent=msg.from_agent) if log_path else None
+                    if latest is not None:
+                        agent_state["handled_completion_hash"] = latest["hash"]
+                safety[msg.from_agent] = agent_state
+            _set_session_safety_state(conn, task_id, safety)
             room = conn.execute("SELECT * FROM rooms WHERE id=?", (task_id,)).fetchone()
         if room["status"] in TERMINAL_STATUSES:
             return "terminal"
@@ -129,6 +203,10 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             return "no_turn"
         last_message_id = int(room["last_message_id"])
         if state and state["last_triggered_turn"] == turn and int(state["last_triggered_message_id"]) == last_message_id:
+            reason = _check_missing_outbox_after_completion(conn, root=root, task_id=task_id, agent=turn, now=time.monotonic())
+            if reason:
+                _pause_relay(conn, task_id, reason)
+                return "missing_outbox_after_turn"
             return "idle"
         pane = conn.execute(
             "SELECT pane_id FROM panes WHERE room_id=? AND pane_role=?",
