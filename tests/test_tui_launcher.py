@@ -15,6 +15,7 @@ from tui_launcher import (
     launch_workspace,
     lookup_pane,
     parse_wezterm_list,
+    run_wezterm_cli,
     validate_workspace_startup,
 )
 
@@ -74,6 +75,23 @@ def test_ensure_mux_alive_fails_fast_when_wezterm_list_hangs(monkeypatch, tmp_pa
     wez.write_bytes(b"")
     with pytest.raises(RuntimeError, match="timed out"):
         ensure_mux_alive(wez, max_wait_s=0.1)
+
+
+def test_run_wezterm_cli_timeout_returns_original_argv(monkeypatch):
+    class FakeProc:
+        pid = 123
+        returncode = None
+
+        def communicate(self, timeout):
+            raise subprocess.TimeoutExpired(["wezterm", "cli", "list"], timeout)
+
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(tui_launcher, "_kill_process_tree", lambda proc: None)
+    argv = ["wezterm", "cli", "list"]
+    rv = run_wezterm_cli(argv, timeout=0.1)
+    assert rv.args == argv
+    assert rv.returncode == 124
+    assert "timed out" in rv.stderr
 
 
 def test_parse_and_lookup_wezterm_list():

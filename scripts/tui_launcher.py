@@ -70,7 +70,7 @@ def run_wezterm_cli(argv: List[str], *, timeout: float = 15.0) -> subprocess.Com
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
-        return subprocess.CompletedProcess(list_argv, proc.returncode, stdout, stderr)
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
     except subprocess.TimeoutExpired:
         _kill_process_tree(proc)
         try:
