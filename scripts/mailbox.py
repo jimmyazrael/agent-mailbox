@@ -1129,6 +1129,9 @@ def _find_stale_workspaces(*, wezterm_exe: Path, rooms: dict[str, dict[str, Any]
         build_list_argv(wezterm_exe=wezterm_exe),
         timeout=15,
     )
+    if rv.returncode == 124:
+        print(f"warning: unable to list WezTerm panes for stale cleanup: {rv.stderr.strip()}", file=sys.stderr)
+        return []
     rv.check_returncode()
     panes = parse_wezterm_list(rv.stdout)
     by_workspace: dict[str, list[int]] = {}

@@ -1214,6 +1214,23 @@ def test_reap_stale_workspaces_dry_run_and_yes(monkeypatch, tmp_path):
     assert not any("11" in call for call in killed)
 
 
+def test_reap_stale_workspaces_tolerates_wezterm_list_timeout(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "mb"
+    _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr(
+        "tui_launcher.run_wezterm_cli",
+        lambda argv, **kwargs: subprocess.CompletedProcess(argv, 124, "", "wezterm cli timed out"),
+    )
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(["reap-stale-workspaces", "--root", str(root), "--yes", "--format", "json"])
+    assert mailbox_cli.cmd_reap_stale_workspaces(args) == 0
+    captured = capsys.readouterr()
+    assert "unable to list WezTerm panes" in captured.err
+    assert '"stale_workspaces": []' in captured.out
+
+
 def test_archive_terminal_task_removes_live_rows_and_writes_archive(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
