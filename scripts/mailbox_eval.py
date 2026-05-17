@@ -46,6 +46,7 @@ def _run_mailbox(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
         stdout.seek(0)
         stderr.seek(0)
@@ -60,6 +61,7 @@ def _get_pane_text(wezterm_exe: Path, pane_id: int) -> str:
         encoding="utf-8",
         errors="replace",
         timeout=10,
+        stdin=subprocess.DEVNULL,
     )
     return rv.stdout or ""
 
@@ -76,6 +78,7 @@ def _send_choice(wezterm_exe: Path, pane_id: int, text: str) -> None:
         encoding="utf-8",
         errors="replace",
         timeout=10,
+        stdin=subprocess.DEVNULL,
     )
     time.sleep(0.25)
     subprocess.run(
@@ -85,6 +88,7 @@ def _send_choice(wezterm_exe: Path, pane_id: int, text: str) -> None:
         encoding="utf-8",
         errors="replace",
         timeout=10,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -349,6 +353,7 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         encoding="utf-8",
         errors="replace",
         timeout=30,
+        stdin=subprocess.DEVNULL,
     )
     if relay_rv.returncode != 0:
         raise RuntimeError(relay_rv.stderr or relay_rv.stdout)

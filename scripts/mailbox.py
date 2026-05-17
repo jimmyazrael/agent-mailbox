@@ -205,6 +205,7 @@ def _spawn_workspace_tab(
         encoding="utf-8",
         errors="replace",
         timeout=15,
+        stdin=subprocess.DEVNULL,
     )
     list_rv.check_returncode()
     workspace_panes = lookup_pane(parse_wezterm_list(list_rv.stdout), workspace=workspace)
@@ -223,6 +224,7 @@ def _spawn_workspace_tab(
         capture_output=True,
         text=True,
         timeout=30,
+        stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
     text = rv.stdout.strip()
@@ -416,6 +418,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                         ),
                         capture_output=True,
                         text=True,
+                        stdin=subprocess.DEVNULL,
                     )
                     rv.check_returncode()
                     text = rv.stdout.strip()
@@ -720,6 +723,7 @@ def _run_mailbox_cli(args, *subargs: str) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         errors="replace",
         timeout=60,
+        stdin=subprocess.DEVNULL,
     )
 
 
@@ -847,6 +851,7 @@ def _live_workspace_panes(root: Path, task_id: str) -> list[dict[str, Any]]:
         encoding="utf-8",
         errors="replace",
         timeout=15,
+        stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
     return lookup_pane(parse_wezterm_list(rv.stdout), workspace=workspace)
@@ -1108,6 +1113,7 @@ def _find_stale_workspaces(*, wezterm_exe: Path, rooms: dict[str, dict[str, Any]
         encoding="utf-8",
         errors="replace",
         timeout=15,
+        stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
     panes = parse_wezterm_list(rv.stdout)
@@ -1163,6 +1169,7 @@ def cmd_reap_stale_workspaces(args) -> int:
                     encoding="utf-8",
                     errors="replace",
                     timeout=15,
+                    stdin=subprocess.DEVNULL,
                 )
                 kill.check_returncode()
                 killed.append(pane_id)
@@ -1385,6 +1392,7 @@ def cmd_resume(args) -> int:
             text=True,
             encoding="utf-8",
             errors="replace",
+            stdin=subprocess.DEVNULL,
         )
         live = parse_wezterm_list(rv.stdout) if rv.returncode == 0 else []
         live_ids = {int(pane["pane_id"]) for pane in live}
@@ -1446,6 +1454,7 @@ def cmd_resume(args) -> int:
                 ),
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
             )
             rv.check_returncode()
             if rv.stdout.strip().isdigit():
@@ -1469,6 +1478,7 @@ def cmd_resume(args) -> int:
                 ),
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
             )
             rv.check_returncode()
             if rv.stdout.strip().isdigit():
@@ -1505,7 +1515,12 @@ def cmd_stop(args) -> int:
 
         wez = find_wezterm()
         for pane_id in pane_ids:
-            subprocess.run(build_kill_pane_argv(wezterm_exe=wez, pane_id=pane_id), capture_output=True, text=True)
+            subprocess.run(
+                build_kill_pane_argv(wezterm_exe=wez, pane_id=pane_id),
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+            )
     return _emit(args, ok=True, data={"task_id": task_id, "status": "stopped"})
 
 
@@ -1566,6 +1581,7 @@ def cmd_repair(args) -> int:
                 ),
                 capture_output=True,
                 text=True,
+                stdin=subprocess.DEVNULL,
             )
             if rv.returncode != 0:
                 return _emit(args, ok=False, error=f"failed to send restart command to {agent} pane: {rv.stderr.strip()}")

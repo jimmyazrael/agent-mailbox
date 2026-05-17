@@ -32,7 +32,12 @@ def trigger_text(*, agent: str, peer: str, task_id: str, root: Path, first_turn:
 
 def send_trigger(*, wezterm_exe: Path, pane_id: int, agent: str, peer: str, task_id: str, root: Path, first_turn: bool = False) -> bool:
     text = trigger_text(agent=agent, peer=peer, task_id=task_id, root=root, first_turn=first_turn)
-    subprocess.run(build_activate_pane_argv(wezterm_exe=wezterm_exe, pane_id=pane_id), capture_output=True, text=True)
+    subprocess.run(
+        build_activate_pane_argv(wezterm_exe=wezterm_exe, pane_id=pane_id),
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+    )
     # Real Claude/Codex TUIs may accept the text but ignore a trailing CR in the
     # same send-text call. Send Enter separately; this validated U1 on Windows.
     rv_text = subprocess.run(
@@ -44,6 +49,7 @@ def send_trigger(*, wezterm_exe: Path, pane_id: int, agent: str, peer: str, task
         ),
         capture_output=True,
         text=True,
+        stdin=subprocess.DEVNULL,
     )
     if rv_text.returncode != 0:
         return False
@@ -57,6 +63,7 @@ def send_trigger(*, wezterm_exe: Path, pane_id: int, agent: str, peer: str, task
         ),
         capture_output=True,
         text=True,
+        stdin=subprocess.DEVNULL,
     )
     return rv_enter.returncode == 0
 
@@ -68,6 +75,7 @@ def _pane_alive(wezterm_exe: Path, pane_id: int) -> bool:
         text=True,
         encoding="utf-8",
         errors="replace",
+        stdin=subprocess.DEVNULL,
     )
     if rv.returncode != 0:
         return False
@@ -85,6 +93,7 @@ def _pane_error_reason(wezterm_exe: Path, pane_id: int) -> Optional[str]:
         text=True,
         encoding="utf-8",
         errors="replace",
+        stdin=subprocess.DEVNULL,
     )
     if rv.returncode != 0:
         return None

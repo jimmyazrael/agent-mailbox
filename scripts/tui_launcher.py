@@ -39,7 +39,7 @@ def find_codex() -> Path | None:
 
 def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
     list_argv = build_list_argv(wezterm_exe=wezterm_exe)
-    rv = subprocess.run(list_argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    rv = subprocess.run(list_argv, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
     if rv.returncode == 0:
         return
     mux_exe = wezterm_exe.parent / ("wezterm-mux-server.exe" if os.name == "nt" else "wezterm-mux-server")
@@ -50,6 +50,7 @@ def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
         subprocess.Popen(
             [str(mux_exe), "start"],
             creationflags=creationflags,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
@@ -57,13 +58,14 @@ def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
     else:
         subprocess.Popen(
             [str(wezterm_exe), "start", "--always-new-process"],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
         )
     deadline = time.time() + max_wait_s
     while time.time() < deadline:
-        rv = subprocess.run(list_argv, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        rv = subprocess.run(list_argv, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
         if rv.returncode == 0:
             return
         time.sleep(0.25)
@@ -99,6 +101,7 @@ def get_pane_text(wezterm_exe: Path, pane_id: int, *, start_line: int = -80) -> 
         encoding="utf-8",
         errors="replace",
         timeout=10,
+        stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
     return rv.stdout or ""
@@ -142,6 +145,7 @@ def validate_workspace_startup(
         encoding="utf-8",
         errors="replace",
         timeout=10,
+        stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
     panes = parse_wezterm_list(rv.stdout)
@@ -180,6 +184,7 @@ def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
         encoding="utf-8",
         errors="replace",
         timeout=15,
+        stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
     return [int(pane["pane_id"]) for pane in lookup_pane(parse_wezterm_list(rv.stdout), workspace=workspace)]
@@ -227,6 +232,7 @@ def launch_workspace(
         text=True,
         env=env,
         timeout=30,
+        stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
     claude_id = _parse_pane_id(rv.stdout)
@@ -249,6 +255,7 @@ def launch_workspace(
         text=True,
         env=env,
         timeout=30,
+        stdin=subprocess.DEVNULL,
     )
     rv2.check_returncode()
     codex_id = _parse_pane_id(rv2.stdout)
