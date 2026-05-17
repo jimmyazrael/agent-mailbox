@@ -1051,9 +1051,18 @@ def test_launch_control_panel_cmd_shape():
 def test_agent_pane_wrappers_call_nested_cmd_shims():
     codex_text = (SKILL_ROOT / "scripts" / "launch_codex_pane.cmd").read_text(encoding="utf-8")
     claude_text = (SKILL_ROOT / "scripts" / "launch_claude_pane.cmd").read_text(encoding="utf-8")
+    codex_resume_text = (SKILL_ROOT / "scripts" / "resume_codex_pane.cmd").read_text(encoding="utf-8")
+    claude_resume_text = (SKILL_ROOT / "scripts" / "resume_claude_pane.cmd").read_text(encoding="utf-8")
     assert "call codex" in codex_text
     assert "call claude" in claude_text
     assert "AGENT_MAILBOX_CODEX_EXE" in codex_text
+    assert "--ask-for-approval" in codex_text
+    assert "AGENT_MAILBOX_CODEX_APPROVAL=never" in codex_text
+    assert "AGENT_MAILBOX_CODEX_SANDBOX=danger-full-access" in codex_text
+    assert "--ask-for-approval" in codex_resume_text
+    assert "--permission-mode" in claude_text
+    assert "AGENT_MAILBOX_CLAUDE_PERMISSION_MODE=auto" in claude_text
+    assert "--permission-mode" in claude_resume_text
     assert "cmd /k" in codex_text
     assert "cmd /k" in claude_text
 
