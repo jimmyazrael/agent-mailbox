@@ -37,9 +37,29 @@ def find_codex() -> Path | None:
     return Path(found) if found else None
 
 
+def _run_wezterm_list(list_argv: List[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            list_argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            list_argv,
+            124,
+            exc.stdout or "",
+            f"wezterm list timed out after {timeout}s",
+        )
+
+
 def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
     list_argv = build_list_argv(wezterm_exe=wezterm_exe)
-    rv = subprocess.run(list_argv, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+    rv = _run_wezterm_list(list_argv)
     if rv.returncode == 0:
         return
     mux_exe = wezterm_exe.parent / ("wezterm-mux-server.exe" if os.name == "nt" else "wezterm-mux-server")
@@ -64,12 +84,14 @@ def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:
             close_fds=True,
         )
     deadline = time.time() + max_wait_s
+    last_error = rv.stderr
     while time.time() < deadline:
-        rv = subprocess.run(list_argv, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+        rv = _run_wezterm_list(list_argv)
         if rv.returncode == 0:
             return
+        last_error = rv.stderr
         time.sleep(0.25)
-    raise RuntimeError(f"wezterm mux did not become available within {max_wait_s}s")
+    raise RuntimeError(f"wezterm mux did not become available within {max_wait_s}s: {last_error}")
 
 
 def parse_wezterm_list(stdout: str) -> List[Dict[str, Any]]:

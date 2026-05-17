@@ -57,6 +57,24 @@ def test_ensure_mux_alive_starts_when_needed(monkeypatch, tmp_path):
     assert any("start" in call for call in calls)
 
 
+def test_ensure_mux_alive_fails_fast_when_wezterm_list_hangs(monkeypatch, tmp_path):
+    def fake_run(argv, **kwargs):
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    def fake_popen(argv, **kwargs):
+        class P:
+            pid = 999
+
+        return P()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    wez = tmp_path / "wezterm.exe"
+    wez.write_bytes(b"")
+    with pytest.raises(RuntimeError, match="timed out"):
+        ensure_mux_alive(wez, max_wait_s=0.1)
+
+
 def test_parse_and_lookup_wezterm_list():
     payload = json.dumps(
         [
