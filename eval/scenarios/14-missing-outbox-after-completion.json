@@ -1,0 +1,19 @@
+{
+  "id": "AM-14",
+  "name": "Missing outbox after completed session pauses",
+  "category": "outbox-safety-net",
+  "difficulty": "hard",
+  "relay_version": "v2-outbox",
+  "goal": "If native session logs show a completed agent turn but no outbox appears, v2 relay must pause for user attention.",
+  "first_turn": "claude",
+  "timeout_seconds": 240,
+  "workspace_files": {
+    "README.md": "# Missing Outbox Safety Net\n\nSession completion without outbox must pause rather than infer content.\n"
+  },
+  "context": "This scenario is primarily synthetic. The session log will show an end_turn/final_answer completion without an outbox file. The correct result is missing_outbox_after_turn:<agent> and no auto-import.",
+  "synthetic_action": "missing_outbox_after_completion",
+  "success": {
+    "expected_pause_reason": "missing_outbox_after_turn:claude",
+    "terminal_status": "paused"
+  }
+}

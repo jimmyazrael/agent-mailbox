@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_chat import connect_db, export_transcript_md
+from outbox import SENTINEL
 from pane_control import build_activate_pane_argv, build_get_text_argv, build_send_text_argv, build_split_argv
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -177,6 +178,10 @@ def _load_scenarios() -> list[dict[str, Any]]:
     return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(SCENARIO_DIR.glob("*.json"))]
 
 
+def _is_v1_only(scenario: dict[str, Any]) -> bool:
+    return bool(scenario.get("deprecated_in_v2")) or scenario.get("relay_version") == "v1-only"
+
+
 def _current_turn(root: Path, task_id: str) -> str | None:
     conn = connect_db(root)
     try:
@@ -327,8 +332,9 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
     eval_env = {
         "AGENT_MAILBOX_CLAUDE_PERMISSION_MODE": os.environ.get(
             "AGENT_MAILBOX_CLAUDE_PERMISSION_MODE",
-            "bypassPermissions",
-        )
+            "auto",
+        ),
+        "AGENT_MAILBOX_RELAY_VERSION": "2",
     }
     launch_rv = _run_mailbox(
         "launch-tui",
@@ -336,8 +342,6 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         str(mailbox_root),
         "--task-id",
         task_id,
-        "--no-chat",
-        "--no-control-panel",
         "--format",
         "json",
         timeout=120,
@@ -426,6 +430,114 @@ def _stop_real_task(mailbox_root: Path, task_id: str) -> None:
         pass
 
 
+def _write_outbox(path: Path, *, from_agent: str, to_agent: str, status: str, summary: str, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "---",
+                f"from: {from_agent}",
+                f"to: {to_agent}",
+                f"status: {status}",
+                f"summary: {summary}",
+                "---",
+                "",
+                body,
+                "",
+                SENTINEL,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def _run_synthetic_action(mailbox_root: Path, task_id: str, scenario: dict[str, Any], synthetic: str) -> tuple[str, list[str]]:
+    env = {"AGENT_MAILBOX_RELAY_VERSION": "2"}
+    conn = connect_db(mailbox_root)
+    try:
+        room = conn.execute("SELECT * FROM rooms WHERE id=?", (task_id,)).fetchone()
+        if synthetic == "outbox_changed_after_import":
+            path = mailbox_root / task_id / "outbox" / "claude" / "000001.md"
+            _write_outbox(path, from_agent="claude", to_agent="codex", status="continue", summary="first", body="first body")
+            conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id, bound_at) VALUES(?,?,?,?)", (task_id, "codex", 12, "synthetic"))
+            import tui_relay_v2
+
+            old_alive = tui_relay_v2._pane_alive
+            old_send = tui_relay_v2.send_doorbell
+            try:
+                tui_relay_v2._pane_alive = lambda *args, **kwargs: True
+                tui_relay_v2.send_doorbell = lambda **kwargs: True
+                tui_relay_v2.run_once(root=mailbox_root, task_id=task_id, wezterm_exe=Path("wezterm"))
+            finally:
+                tui_relay_v2._pane_alive = old_alive
+                tui_relay_v2.send_doorbell = old_send
+            _write_outbox(path, from_agent="claude", to_agent="codex", status="continue", summary="changed", body="changed body")
+            tui_relay_v2.run_once(root=mailbox_root, task_id=task_id, wezterm_exe=Path("wezterm"))
+        elif synthetic == "missing_outbox_after_completion":
+            session_id = "claude-synthetic"
+            project_dir = Path(room["project_cwd"])
+            claude_root = mailbox_root / "synthetic-claude-projects"
+            encoded = str(project_dir).replace("\\", "-").replace("/", "-").replace(":", "-").strip("-")
+            log_dir = claude_root / encoded
+            log_dir.mkdir(parents=True, exist_ok=True)
+            (log_dir / f"{session_id}.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "timestamp": "2026-05-17T00:00:00Z",
+                        "message": {
+                            "role": "assistant",
+                            "stop_reason": "end_turn",
+                            "content": [{"type": "text", "text": "completed without outbox"}],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO agent_sessions(room_id, agent, session_id, session_name, discovery_status) VALUES(?,?,?,?,?)",
+                (task_id, "claude", session_id, "synthetic", "discovered"),
+            )
+            conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id, bound_at) VALUES(?,?,?,?)", (task_id, "claude", 11, "synthetic"))
+            import tui_relay_v2
+            import session_logs
+
+            old_grace = tui_relay_v2.MISSING_OUTBOX_GRACE_S
+            old_find = session_logs.find_session_log
+            old_alive = tui_relay_v2._pane_alive
+            old_send = tui_relay_v2.send_doorbell
+            try:
+                tui_relay_v2.MISSING_OUTBOX_GRACE_S = 0.0
+                session_logs.find_session_log = lambda **kwargs: log_dir / f"{session_id}.jsonl"
+                tui_relay_v2._pane_alive = lambda *args, **kwargs: True
+                tui_relay_v2.send_doorbell = lambda **kwargs: True
+                tui_relay_v2.run_once(root=mailbox_root, task_id=task_id, wezterm_exe=Path("wezterm"))
+                tui_relay_v2.run_once(root=mailbox_root, task_id=task_id, wezterm_exe=Path("wezterm"))
+            finally:
+                tui_relay_v2.MISSING_OUTBOX_GRACE_S = old_grace
+                session_logs.find_session_log = old_find
+                tui_relay_v2._pane_alive = old_alive
+                tui_relay_v2.send_doorbell = old_send
+        else:
+            return "error", [f"unknown synthetic_action: {synthetic}"]
+        relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
+        expected = scenario.get("success", {}).get("expected_pause_reason")
+        outbox_count = conn.execute("SELECT COUNT(*) FROM messages WHERE room_id=? AND kind='outbox'", (task_id,)).fetchone()[0]
+        notes = []
+        if expected and (not relay or relay["pause_reason"] != expected):
+            notes.append(f"pause reason {relay['pause_reason'] if relay else None!r}, expected {expected!r}")
+        if synthetic == "outbox_changed_after_import" and outbox_count != 1:
+            notes.append(f"outbox message count {outbox_count}, expected 1")
+        if synthetic == "missing_outbox_after_completion" and outbox_count != 0:
+            notes.append(f"outbox message count {outbox_count}, expected 0")
+        return ("pass" if not notes else "fail"), notes
+    finally:
+        conn.close()
+
+
 def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: bool = False) -> ScenarioResult:
     work_root = Path(tempfile.mkdtemp(prefix=f"agent_mailbox_eval_{scenario['id']}_"))
     project = work_root / "project"
@@ -438,6 +550,9 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
     task_id: str | None = None
     result: ScenarioResult | None = None
     try:
+        if _is_v1_only(scenario) and not launch_real:
+            result = ScenarioResult(scenario["id"], scenario["name"], "skipped", ["v1-only scenario; deprecated in v2"], str(work_root), None)
+            return result
         start_args = [
             "init",
             "--root",
@@ -470,7 +585,12 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
                 return result
             task_id = json.loads(rv.stdout)["data"]["task_id"]
         if not launch_real:
-            result = ScenarioResult(scenario["id"], scenario["name"], "defined", ["scenario initialized only; pass --run-real to execute"], str(work_root), task_id)
+            synthetic = scenario.get("synthetic_action")
+            if synthetic:
+                status, notes = _run_synthetic_action(mailbox_root, task_id, scenario, synthetic)
+                result = ScenarioResult(scenario["id"], scenario["name"], status, notes, str(work_root), task_id)
+            else:
+                result = ScenarioResult(scenario["id"], scenario["name"], "defined", ["scenario initialized only; pass --run-real to execute"], str(work_root), task_id)
             return result
         terminal, observed_blocked = _poll_to_terminal(
             mailbox_root,
@@ -541,7 +661,7 @@ def main() -> int:
     results = [run_scenario(s, keep=args.keep, launch_real=args.run_real) for s in scenarios]
     for result in results:
         print(json.dumps(result.__dict__, ensure_ascii=False))
-    return 0 if all(r.status in {"pass", "defined"} for r in results) else 1
+    return 0 if all(r.status in {"pass", "defined", "skipped"} for r in results) else 1
 
 
 if __name__ == "__main__":

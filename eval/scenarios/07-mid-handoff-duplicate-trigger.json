@@ -3,16 +3,19 @@
   "name": "Mid-handoff duplicate trigger resilience",
   "category": "idempotency",
   "difficulty": "hard",
-  "goal": "A mid-handoff duplicate trigger must not cause duplicate posts for the same latest mailbox message.",
+  "relay_version": "v2-outbox",
+  "goal": "A mid-handoff duplicate trigger must not cause duplicate outbox files or duplicate imported messages for the same latest state.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
-    "README.md": "# Mid-Handoff Duplicate Trigger\n\nThis scenario forces a non-terminal handoff before final. Duplicate triggers may fire while the next agent is active."
+    "README.md": "# Mid-Handoff Duplicate Trigger\n\nThis scenario forces a non-terminal handoff before final. Duplicate triggers may fire while the next agent is active.\n"
   },
-  "context": "You are testing duplicate-trigger resilience during a non-terminal handoff. A duplicate trigger may fire for the same latest mailbox message while a peer turn is active. For every response, first read the latest mailbox state and mention the latest last_message_id you handled. Respond to any given latest last_message_id exactly once. If you see a duplicate trigger after you have already replied to that same latest last_message_id, do nothing; your prior post is sufficient. Required flow: Claude must first post status=continue asking Codex to confirm duplicate-trigger handling. Codex must then post exactly one status=continue confirmation. Claude must then post status=final. The final answer should mention mid-handoff duplicate trigger resilience and the last_message_id discipline.",
+  "context": "You are testing duplicate-trigger resilience under v2. A duplicate doorbell may fire for the same latest state while a peer turn is active. Respond to each requested turn exactly once by writing one completed outbox file. Required flow: Claude first asks Codex to confirm duplicate-trigger handling; Codex writes exactly one confirmation; Claude then writes final. The final answer should mention mid-handoff duplicate trigger resilience.",
   "extra_triggers": 1,
   "success": {
-    "required_transcript_terms": ["last_message_id", "mid-handoff duplicate trigger"],
+    "required_transcript_terms": [
+      "mid-handoff duplicate trigger"
+    ],
     "max_messages": 4,
     "terminal_status": "final"
   }

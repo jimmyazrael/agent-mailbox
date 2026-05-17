@@ -3,7 +3,8 @@
   "name": "Context overload with one relevant clue",
   "category": "context-overload",
   "difficulty": "hard",
-  "goal": "Agents must ignore distractors and use the single relevant clue.",
+  "relay_version": "v2-outbox",
+  "goal": "Agents must ignore distractors and use the single relevant clue while communicating through outbox files.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
@@ -13,10 +14,14 @@
     "notes/needle.md": "Relevant clue: the correct output must say SAFE-HARBOR-17 and no files should be edited.\n",
     "src/main.py": "print('important file - do not edit')\n"
   },
-  "context": "This is a context-overload evaluation. Agents must find the relevant clue and avoid editing files. Final answer must include SAFE-HARBOR-17.",
+  "context": "This is a v2 outbox context-overload evaluation. Agents must find the relevant clue and avoid editing files. Final answer must include SAFE-HARBOR-17.",
   "success": {
-    "required_transcript_terms": ["SAFE-HARBOR-17"],
-    "forbidden_file_changes": ["src/main.py"],
+    "required_transcript_terms": [
+      "SAFE-HARBOR-17"
+    ],
+    "forbidden_file_changes": [
+      "src/main.py"
+    ],
     "terminal_status": "final"
   }
 }

@@ -3,16 +3,19 @@
   "name": "Max rounds fails closed",
   "category": "safety-limit",
   "difficulty": "hard",
-  "goal": "A stalled or circular task must stop at the configured max round limit instead of continuing indefinitely.",
+  "relay_version": "v2-outbox",
+  "goal": "A stalled or circular v2 outbox task must stop at the configured max round limit instead of continuing indefinitely.",
   "first_turn": "codex",
   "timeout_seconds": 360,
   "workspace_files": {
     "README.md": "# Max Rounds\n\nThis scenario is designed to catch missing runtime enforcement of the max_rounds limit.\n",
     "result.txt": "pending\n"
   },
-  "context": "The agents should complete quickly and avoid circular acknowledgements. If they do loop, the mailbox runtime must mark the room error with max_rounds_exceeded rather than continuing forever. The success path edits result.txt to MAX-ROUNDS-PASS and reaches final before the limit.",
+  "context": "The agents should complete quickly through outbox files and avoid circular acknowledgements. If they do loop, the mailbox runtime must mark the room error with max_rounds_exceeded rather than continuing forever. The success path edits result.txt to MAX-ROUNDS-PASS and reaches final before the limit.",
   "success": {
-    "required_transcript_terms": ["MAX-ROUNDS-PASS"],
+    "required_transcript_terms": [
+      "MAX-ROUNDS-PASS"
+    ],
     "max_messages": 6,
     "terminal_status": "final"
   }

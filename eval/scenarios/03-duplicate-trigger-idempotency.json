@@ -1,18 +1,22 @@
 {
   "id": "AM-03",
-  "name": "Duplicate trigger idempotency",
+  "name": "Duplicate outbox import idempotency",
   "category": "idempotency",
   "difficulty": "hard",
-  "goal": "A duplicate trigger must not cause duplicate posts for the same latest message.",
+  "relay_version": "v2-outbox",
+  "goal": "Duplicate doorbells or duplicate outbox content must not create duplicate imported messages for the same response.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
-    "README.md": "# Idempotency Trap\n\nThe task is simple, but the relay will be asked to trigger twice."
+    "README.md": "# Idempotency Trap\n\nThe task is simple, but the relay may be asked to trigger twice.\n"
   },
-  "context": "If the same mailbox message is already handled, do not post a duplicate response. The final answer should mention idempotency.",
+  "context": "This is a v2 outbox idempotency test. If the same turn is already handled, do not write duplicate outbox responses. The final answer should mention idempotency and one-shot doorbells.",
   "extra_triggers": 1,
   "success": {
-    "required_transcript_terms": ["idempotency"],
+    "required_transcript_terms": [
+      "idempotency",
+      "one-shot"
+    ],
     "max_messages": 4,
     "terminal_status": "final"
   }

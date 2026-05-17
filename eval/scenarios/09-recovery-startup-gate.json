@@ -3,16 +3,19 @@
   "name": "Recovery startup gate",
   "category": "recovery",
   "difficulty": "hard",
-  "goal": "After a pane crash or resume, the relay must stay paused until both Claude and Codex panes are visibly ready.",
+  "relay_version": "v2-outbox",
+  "goal": "After a pane crash or resume, the v2 relay must stay paused until both Claude and Codex panes are visibly ready.",
   "first_turn": "claude",
   "timeout_seconds": 480,
   "workspace_files": {
     "README.md": "# Recovery Startup Gate\n\nThe task passes only if relay recovery does not fire while an agent pane is still at a trust, update, shell, auth, or unknown prompt.\n",
     "result.txt": "pending\n"
   },
-  "context": "Simulate a recovery after one pane is recreated. The owner should verify the recovery gate before continuing. Do not mark final until result.txt contains RECOVERY-GATE-PASS and the peer has reviewed that the relay did not resume early.",
+  "context": "Simulate a recovery after one pane is recreated. The owner should verify the recovery gate before continuing through outbox files. Do not mark final until result.txt contains RECOVERY-GATE-PASS and the peer has reviewed that the relay did not resume early.",
   "success": {
-    "required_transcript_terms": ["RECOVERY-GATE-PASS"],
+    "required_transcript_terms": [
+      "RECOVERY-GATE-PASS"
+    ],
     "max_messages": 8,
     "terminal_status": "final"
   }

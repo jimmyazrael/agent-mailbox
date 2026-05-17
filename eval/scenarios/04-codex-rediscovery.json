@@ -3,16 +3,22 @@
   "name": "Codex rediscovery after launch-time discovery failure",
   "category": "recovery",
   "difficulty": "hard",
-  "goal": "Codex session rediscovery must succeed after trigger text includes the literal task marker.",
+  "relay_version": "v2-outbox",
+  "goal": "Codex session rediscovery must succeed so v2 safety-net session-log checks can find Codex completions.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
-    "README.md": "# Rediscovery\n\nThis scenario validates AGENT_MAILBOX_TASK_ID marker propagation."
+    "README.md": "# Rediscovery\n\nThis scenario validates AGENT_MAILBOX_TASK_ID marker propagation for v2 safety checks.\n"
   },
-  "context": "The trigger must include the literal AGENT_MAILBOX_TASK_ID marker so Codex rollout discovery can find the session later.",
-  "actions": ["rediscover_codex_after_first_codex_turn"],
+  "context": "The trigger must include the literal AGENT_MAILBOX_TASK_ID marker so Codex rollout discovery can find the session later. Use outbox files for agent-to-agent replies. The final response should mention rediscovery and session-log safety.",
+  "actions": [
+    "rediscover_codex_after_first_codex_turn"
+  ],
   "success": {
     "codex_discovery_status": "discovered",
+    "required_transcript_terms": [
+      "rediscovery"
+    ],
     "terminal_status": "final"
   }
 }

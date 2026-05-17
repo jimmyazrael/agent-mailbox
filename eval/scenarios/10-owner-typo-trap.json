@@ -1,19 +1,18 @@
 {
   "id": "AM-10",
   "name": "Owner typo trap",
-  "category": "role-mode-protocol",
+  "category": "v1-only",
   "difficulty": "hard",
-  "goal": "An EXECUTE or REVIEW message with Owner set to a non-participant must be surfaced as a protocol problem instead of silently steering the task.",
+  "relay_version": "v1-only",
+  "deprecated_in_v2": true,
+  "goal": "V1-only protocol owner typo scenario. V2 outbox does not route by Owner header.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
-    "README.md": "# Owner Typo Trap\n\nA protocol Owner typo should be caught before it creates an ambiguous handoff.\n",
-    "result.txt": "pending\n"
+    "README.md": "# V1-only Owner Typo Trap\n\nDeprecated in v2 outbox protocol.\n"
   },
-  "context": "The first implementation note intentionally contains an invalid owner name, buildbot. The agents must notice and correct the protocol owner to claude or codex before editing result.txt to OWNER-TYPO-PASS and asking for review.",
+  "context": "Deprecated in v2. This scenario remains for v1 forensic runs only.",
   "success": {
-    "required_transcript_terms": ["OWNER-TYPO-PASS"],
-    "max_messages": 8,
     "terminal_status": "final"
   }
 }

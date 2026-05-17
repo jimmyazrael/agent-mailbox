@@ -22,9 +22,13 @@ def test_eval_scenarios_are_hard_and_structured():
         assert data["goal"]
         assert data["context"]
         assert data["workspace_files"]
-        assert data["success"]["terminal_status"] == "final"
+        if data.get("deprecated_in_v2"):
+            assert data["relay_version"] == "v1-only"
+        else:
+            assert data["relay_version"] == "v2-outbox"
+            assert data["success"]["terminal_status"] in {"final", "paused"}
         categories.add(data["category"])
-    assert {"context-bootstrap", "blocked-resume", "idempotency", "recovery", "context-overload", "role-mode-protocol"}.issubset(categories)
+    assert {"context-bootstrap", "blocked-resume", "idempotency", "recovery", "context-overload", "role-mode-protocol", "outbox-integrity", "outbox-safety-net"}.issubset(categories)
 
 
 def test_mailbox_eval_refuses_real_without_env():
@@ -48,6 +52,42 @@ def test_mailbox_eval_initializes_scenario_without_real_agents():
     assert result["scenario_id"] == "AM-01"
     assert result["status"] == "defined"
     assert result["task_id"]
+
+
+def test_mailbox_eval_skips_v1_only_scenario_without_real_agents():
+    rv = subprocess.run(
+        [sys.executable, str(MAILBOX_EVAL), "--scenario", "AM-08"],
+        capture_output=True,
+        text=True,
+    )
+    assert rv.returncode == 0, rv.stderr
+    result = json.loads(rv.stdout)
+    assert result["scenario_id"] == "AM-08"
+    assert result["status"] == "skipped"
+
+
+def test_mailbox_eval_runs_synthetic_outbox_integrity_scenario():
+    rv = subprocess.run(
+        [sys.executable, str(MAILBOX_EVAL), "--scenario", "AM-13"],
+        capture_output=True,
+        text=True,
+    )
+    assert rv.returncode == 0, rv.stderr
+    result = json.loads(rv.stdout)
+    assert result["scenario_id"] == "AM-13"
+    assert result["status"] == "pass"
+
+
+def test_mailbox_eval_runs_synthetic_missing_outbox_scenario():
+    rv = subprocess.run(
+        [sys.executable, str(MAILBOX_EVAL), "--scenario", "AM-14"],
+        capture_output=True,
+        text=True,
+    )
+    assert rv.returncode == 0, rv.stderr
+    result = json.loads(rv.stdout)
+    assert result["scenario_id"] == "AM-14"
+    assert result["status"] == "pass"
 
 
 def test_run_mailbox_accepts_env_overrides(monkeypatch):

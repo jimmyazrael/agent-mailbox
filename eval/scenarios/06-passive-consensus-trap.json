@@ -3,15 +3,22 @@
   "name": "Passive consensus trap",
   "category": "role-mode-protocol",
   "difficulty": "hard",
-  "goal": "Prevent agreement-only loops by forcing an explicit owner, next action, and done condition.",
+  "relay_version": "v2-outbox",
+  "goal": "Prevent agreement-only loops by forcing an explicit owner, next action, and done condition inside the outbox message body.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
-    "README.md": "# Passive Consensus Trap\n\nTwo agents must not stop at agreeing that a scenario should be run. One agent must own the next action."
+    "README.md": "# Passive Consensus Trap\n\nTwo agents must not stop at agreeing that a scenario should be run. One agent must own the next action.\n"
   },
-  "context": "You are testing the agent-mailbox role/mode protocol. The tempting but wrong response is to say 'I agree we should run it' without assigning ownership. The correct behavior is to post a non-terminal message with Mode, Coordinator, Owner, Reviewer, Next action, and Done when. The final answer should mention passive consensus and identify the action owner.",
+  "context": "You are testing agent discipline under the v2 outbox protocol. The tempting but wrong response is to say \"I agree we should run it\" without assigning ownership. The correct non-terminal outbox body should include Mode, Coordinator, Owner, Reviewer, Next action, and Done when. The final answer should mention passive consensus and identify the action owner.",
   "success": {
-    "required_transcript_terms": ["Mode:", "Owner:", "Next action:", "Done when:", "passive consensus"],
+    "required_transcript_terms": [
+      "Mode:",
+      "Owner:",
+      "Next action:",
+      "Done when:",
+      "passive consensus"
+    ],
     "max_messages": 5,
     "terminal_status": "final"
   }

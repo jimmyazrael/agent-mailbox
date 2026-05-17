@@ -1,0 +1,19 @@
+{
+  "id": "AM-13",
+  "name": "Outbox changed after import pauses",
+  "category": "outbox-integrity",
+  "difficulty": "hard",
+  "relay_version": "v2-outbox",
+  "goal": "If an already imported outbox file changes, the v2 observer must pause instead of importing a second or mutated message.",
+  "first_turn": "claude",
+  "timeout_seconds": 240,
+  "workspace_files": {
+    "README.md": "# Outbox Integrity\n\nThe observer must reject changed already-imported outbox files.\n"
+  },
+  "context": "This scenario is primarily synthetic. A completed outbox file will be imported, then changed after import. The correct result is a paused relay with malformed_outbox:outbox_file_changed_after_import and no duplicate message.",
+  "synthetic_action": "outbox_changed_after_import",
+  "success": {
+    "expected_pause_reason": "malformed_outbox:outbox_file_changed_after_import",
+    "terminal_status": "paused"
+  }
+}

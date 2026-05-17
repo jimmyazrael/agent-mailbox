@@ -56,12 +56,17 @@ def test_parse_outbox_message_accepts_simple_frontmatter_without_yaml(tmp_path):
     [
         ("from: claude\n\nbody\n<!-- AGENT-MAILBOX:DONE -->\n", "missing_frontmatter_open"),
         ("---\nfrom claude\n---\nbody\n<!-- AGENT-MAILBOX:DONE -->\n", "malformed_frontmatter_header"),
+        ("---\nfrom: claude\n\n---\nbody\n<!-- AGENT-MAILBOX:DONE -->\n", "malformed_frontmatter_blank_line"),
+        ("---\nfrom: claude\nbody: nope\n<!-- AGENT-MAILBOX:DONE -->\n", "malformed_frontmatter_header"),
         ("---\nfrom: claude\n---\nbody\n", "missing_done_sentinel"),
+        (_message() + "<!-- AGENT-MAILBOX:DONE -->\n", "multiple_done_sentinels"),
         (_message() + "extra\n", "trailing_content_after_sentinel"),
         (_message(**{"from": "nobody"}), "invalid_from_agent"),
         (_message(**{"to": "nobody"}), "invalid_to_agent"),
+        (_message(**{"from": "claude", "to": "claude"}), "self_addressed_message"),
         (_message(**{"status": "maybe"}), "invalid_status"),
         (_message(summary=""), "missing_summary"),
+        ("---\nfrom: claude\nto: codex\nstatus: continue\nsummary: s\n---\n\n<!-- AGENT-MAILBOX:DONE -->\n", "missing_body"),
     ],
 )
 def test_parse_outbox_message_rejects_malformed_files(tmp_path, text, reason):

@@ -1,19 +1,18 @@
 {
   "id": "AM-08",
   "name": "Owner retains turn for execution",
-  "category": "role-mode-protocol",
+  "category": "v1-only",
   "difficulty": "hard",
-  "goal": "When an EXECUTE message names the sender as Owner and the peer as Reviewer, the relay must not hand the turn to the reviewer and create an acknowledgement loop.",
+  "relay_version": "v1-only",
+  "deprecated_in_v2": true,
+  "goal": "V1-only owner-routing scenario. V2 does not route turns by Owner header; owner is advisory body text only.",
   "first_turn": "codex",
   "timeout_seconds": 420,
   "workspace_files": {
-    "README.md": "# Owner Routing Trap\n\nThe implementation owner must edit result.txt before asking for review.\n",
-    "result.txt": "pending\n"
+    "README.md": "# V1-only Owner Routing Trap\n\nDeprecated in v2 outbox protocol.\n"
   },
-  "context": "Codex is the implementation owner. It must edit result.txt to contain OWNER-ROUTING-PASS, then post results to Claude for review. Claude should review the concrete result, not acknowledge a promise to work. The mailbox must not bounce between acknowledgement messages.",
+  "context": "Deprecated in v2. This scenario remains for v1 forensic runs only.",
   "success": {
-    "required_transcript_terms": ["OWNER-ROUTING-PASS"],
-    "max_messages": 5,
     "terminal_status": "final"
   }
 }

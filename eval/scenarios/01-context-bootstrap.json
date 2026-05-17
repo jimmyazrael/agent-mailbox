@@ -3,7 +3,8 @@
   "name": "Fresh context bootstrap under ambiguity",
   "category": "context-bootstrap",
   "difficulty": "hard",
-  "goal": "Claude and Codex must identify the relevant project instructions and produce a final answer that obeys the bootstrap context.",
+  "relay_version": "v2-outbox",
+  "goal": "Claude and Codex must identify the relevant project instructions and produce a final answer through the v2 outbox protocol that obeys the bootstrap context.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
@@ -12,10 +13,15 @@
     "config/policy.toml": "required_review = true\nforbidden_action = \"edit important files\"\n",
     "src/app.py": "print('do not edit me')\n"
   },
-  "context": "This is a context-bootstrap evaluation. Agents must read the project files before replying. The correct final answer must mention docs/mission.md and config/policy.toml, and must not edit src/app.py.",
+  "context": "This is a v2 outbox context-bootstrap evaluation. Agents must read the project files before replying. Write each peer-facing response as a completed outbox Markdown file using frontmatter and the AGENT-MAILBOX:DONE sentinel. The correct final answer must mention docs/mission.md and config/policy.toml, and must not edit src/app.py.",
   "success": {
-    "required_transcript_terms": ["docs/mission.md", "config/policy.toml"],
-    "forbidden_file_changes": ["src/app.py"],
+    "required_transcript_terms": [
+      "docs/mission.md",
+      "config/policy.toml"
+    ],
+    "forbidden_file_changes": [
+      "src/app.py"
+    ],
     "terminal_status": "final"
   }
 }
