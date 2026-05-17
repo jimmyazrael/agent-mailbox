@@ -172,6 +172,154 @@ def test_post_accepts_role_mode_protocol_header(tmp_path):
     assert json.loads(post.stdout)["data"]["warnings"] == []
 
 
+def test_post_accepts_lowercase_protocol_mode(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    body = "\n".join(
+        [
+            "Mode: discuss",
+            "Coordinator: claude",
+            "Owner: claude",
+            "Reviewer: codex",
+            "Next action: compare options",
+            "Done when: a decision is posted",
+        ]
+    )
+    post = _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "claude",
+        "--to",
+        "codex",
+        "--status",
+        "continue",
+        "--summary",
+        "discuss",
+        "--body",
+        body,
+        "--format",
+        "json",
+    )
+    assert post.returncode == 0, post.stderr
+    assert json.loads(post.stdout)["data"]["warnings"] == []
+
+
+def test_post_accepts_v11_synonym_protocol_mode(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    body = "\n".join(
+        [
+            "Mode: Coordinate",
+            "Coordinator: claude",
+            "Owner: codex",
+            "Reviewer: claude",
+            "Next action: codex runs the scenario",
+            "Done when: results are posted",
+        ]
+    )
+    post = _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "claude",
+        "--to",
+        "codex",
+        "--status",
+        "continue",
+        "--summary",
+        "coordinate",
+        "--body",
+        body,
+        "--format",
+        "json",
+    )
+    assert post.returncode == 0, post.stderr
+    assert json.loads(post.stdout)["data"]["warnings"] == []
+
+
+def test_post_rejects_arbitrary_protocol_mode(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    body = "\n".join(
+        [
+            "Mode: lol",
+            "Coordinator: claude",
+            "Owner: claude",
+            "Reviewer: codex",
+            "Next action: do work",
+            "Done when: done",
+        ]
+    )
+    post = _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "claude",
+        "--to",
+        "codex",
+        "--status",
+        "continue",
+        "--summary",
+        "bad mode",
+        "--body",
+        body,
+        "--format",
+        "json",
+    )
+    assert post.returncode == 0, post.stderr
+    assert "unknown protocol Mode: lol" in json.loads(post.stdout)["data"]["warnings"]
+
+
+def test_post_rejects_empty_protocol_mode(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    body = "\n".join(
+        [
+            "Mode: ",
+            "Coordinator: claude",
+            "Owner: claude",
+            "Reviewer: codex",
+            "Next action: do work",
+            "Done when: done",
+        ]
+    )
+    post = _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "claude",
+        "--to",
+        "codex",
+        "--status",
+        "continue",
+        "--summary",
+        "empty mode",
+        "--body",
+        body,
+        "--format",
+        "json",
+    )
+    assert post.returncode == 0, post.stderr
+    assert "missing protocol header: Mode" in json.loads(post.stdout)["data"]["warnings"]
+
+
 def test_launch_tui_fake_panes(monkeypatch, tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")

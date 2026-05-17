@@ -37,11 +37,22 @@ from mailbox_lib import default_root, generate_task_id, peer_for, pid_exists, ut
 TERMINAL_ROOM_STATUSES = {"final", "error", "stopped"}
 
 PROTOCOL_HEADER_FIELDS = ("Mode", "Coordinator", "Owner", "Reviewer", "Next action", "Done when")
-VALID_PROTOCOL_MODES = {"DISCUSS", "EXECUTE", "REVIEW", "BLOCKED", "DONE"}
+VALID_PROTOCOL_MODES = {
+    "DISCUSS",
+    "EXECUTE",
+    "REVIEW",
+    "BLOCKED",
+    "DONE",
+    "INVESTIGATE",
+    "RESEARCH",
+    "PLAN",
+    "COORDINATE",
+    "INFORM",
+}
 
 
 def _header_value(body: str, field: str) -> str | None:
-    match = re.search(rf"(?im)^\s*{re.escape(field)}\s*:\s*(.+?)\s*$", body or "")
+    match = re.search(rf"(?im)^[ \t]*{re.escape(field)}[ \t]*:[ \t]*([^\r\n]*)[ \t]*$", body or "")
     return match.group(1).strip() if match else None
 
 
@@ -52,7 +63,7 @@ def lint_protocol_header(*, status: str, body: str) -> list[str]:
     mode = _header_value(body, "Mode")
     if not mode:
         warnings.append("missing protocol header: Mode")
-    elif mode.upper() not in VALID_PROTOCOL_MODES:
+    elif mode.strip().upper() not in VALID_PROTOCOL_MODES:
         warnings.append(f"unknown protocol Mode: {mode}")
     for field in PROTOCOL_HEADER_FIELDS[1:]:
         if not _header_value(body, field):

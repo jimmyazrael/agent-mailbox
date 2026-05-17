@@ -52,7 +52,7 @@ Agents are equal peers for design and review, but every non-terminal round must 
 Every non-terminal mailbox post should begin with:
 
 ```text
-Mode: DISCUSS | EXECUTE | REVIEW | BLOCKED | DONE
+Mode: DISCUSS | EXECUTE | REVIEW | BLOCKED | DONE | INVESTIGATE | RESEARCH | PLAN | COORDINATE | INFORM
 Coordinator: <agent>
 Owner: <agent-or-none>
 Reviewer: <agent-or-none>
@@ -65,9 +65,15 @@ Mode meanings:
 
 `DISCUSS`: resolve uncertainty, design choices, or risks.
 
+`INVESTIGATE` / `RESEARCH` / `PLAN`: gather context or propose an approach before execution.
+
 `EXECUTE`: one owner performs a concrete action.
 
 `REVIEW`: peer checks concrete output.
+
+`COORDINATE`: assign ownership, sequence handoffs, or resolve who does what next.
+
+`INFORM`: provide status or evidence without changing ownership.
 
 `BLOCKED`: human approval, credentials, destructive action, unclear requirement, or external dependency.
 
