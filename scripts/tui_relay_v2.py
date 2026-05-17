@@ -13,7 +13,7 @@ from outbox import OutboxError, import_outbox_messages, next_outbox_path
 from pane_control import build_activate_pane_argv, build_list_argv, build_send_text_argv
 from tui_launcher import lookup_pane, parse_wezterm_list
 
-MISSING_OUTBOX_GRACE_S = 30.0
+MISSING_OUTBOX_GRACE_S = 180.0
 
 
 def doorbell_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
@@ -121,6 +121,31 @@ def _set_session_safety_state(conn, room_id: str, state: dict) -> None:
     room_state_set(conn, room_id, "session_log_safety", state)
 
 
+def _mark_doorbell_sent(conn, *, room_id: str, agent: str, now: float) -> None:
+    state = _session_safety_state(conn, room_id)
+    agent_state = state.get(agent) if isinstance(state.get(agent), dict) else {}
+    # A single logical doorbell turn can contain multiple session-log end_turn
+    # records before the agent writes its outbox. Correlate safety to doorbells,
+    # not to the first completion observed inside that turn.
+    for key in ("completion_hash", "first_seen_monotonic", "session_path", "session_timestamp"):
+        agent_state.pop(key, None)
+    agent_state["last_doorbell_monotonic"] = now
+    state[agent] = agent_state
+    _set_session_safety_state(conn, room_id, state)
+
+
+def _mark_outbox_imported(conn, *, room_id: str, agent: str, message_id: int, completion_hash: Optional[str]) -> None:
+    state = _session_safety_state(conn, room_id)
+    agent_state = state.get(agent) if isinstance(state.get(agent), dict) else {}
+    agent_state["last_outbox_message_id"] = message_id
+    if completion_hash is not None:
+        agent_state["handled_completion_hash"] = completion_hash
+    for key in ("last_doorbell_monotonic", "completion_hash", "first_seen_monotonic", "session_path", "session_timestamp"):
+        agent_state.pop(key, None)
+    state[agent] = agent_state
+    _set_session_safety_state(conn, room_id, state)
+
+
 def _check_missing_outbox_after_completion(conn, *, root: Path, task_id: str, agent: str, now: float) -> Optional[str]:
     from session_logs import find_session_log, latest_completed_turn
 
@@ -142,18 +167,23 @@ def _check_missing_outbox_after_completion(conn, *, root: Path, task_id: str, ag
     latest_hash = latest["hash"]
     if agent_state.get("handled_completion_hash") == latest_hash:
         return None
+    last_doorbell = agent_state.get("last_doorbell_monotonic")
+    if last_doorbell is None:
+        return None
+    if now - float(last_doorbell) < MISSING_OUTBOX_GRACE_S:
+        if agent_state.get("completion_hash") != latest_hash:
+            agent_state["completion_hash"] = latest_hash
+            agent_state["session_path"] = latest["path"]
+            agent_state["session_timestamp"] = latest.get("timestamp")
+            state[agent] = agent_state
+            _set_session_safety_state(conn, task_id, state)
+        return None
     if agent_state.get("completion_hash") != latest_hash:
-        agent_state = {
-            "completion_hash": latest_hash,
-            "first_seen_monotonic": now,
-            "session_path": latest["path"],
-            "session_timestamp": latest.get("timestamp"),
-        }
+        agent_state["completion_hash"] = latest_hash
+        agent_state["session_path"] = latest["path"]
+        agent_state["session_timestamp"] = latest.get("timestamp")
         state[agent] = agent_state
         _set_session_safety_state(conn, task_id, state)
-        return f"missing_outbox_after_turn:{agent}" if MISSING_OUTBOX_GRACE_S <= 0 else None
-    if now - float(agent_state.get("first_seen_monotonic", now)) < MISSING_OUTBOX_GRACE_S:
-        return None
     return f"missing_outbox_after_turn:{agent}"
 
 
@@ -176,12 +206,10 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
         if imported:
             from session_logs import find_session_log, latest_completed_turn
 
-            safety = _session_safety_state(conn, task_id)
             room_for_logs = conn.execute("SELECT project_cwd FROM rooms WHERE id=?", (task_id,)).fetchone()
             for item in imported:
                 msg = item["message"]
-                agent_state = safety.get(msg.from_agent) if isinstance(safety.get(msg.from_agent), dict) else {}
-                agent_state["last_outbox_message_id"] = int(item["message_id"])
+                completion_hash = None
                 session = conn.execute(
                     "SELECT session_id FROM agent_sessions WHERE room_id=? AND agent=?",
                     (task_id, msg.from_agent),
@@ -194,9 +222,14 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
                     )
                     latest = latest_completed_turn(log_path, agent=msg.from_agent) if log_path else None
                     if latest is not None:
-                        agent_state["handled_completion_hash"] = latest["hash"]
-                safety[msg.from_agent] = agent_state
-            _set_session_safety_state(conn, task_id, safety)
+                        completion_hash = latest["hash"]
+                _mark_outbox_imported(
+                    conn,
+                    room_id=task_id,
+                    agent=msg.from_agent,
+                    message_id=int(item["message_id"]),
+                    completion_hash=completion_hash,
+                )
             room = conn.execute("SELECT * FROM rooms WHERE id=?", (task_id,)).fetchone()
         if room["status"] in TERMINAL_STATUSES:
             return "terminal"
@@ -234,12 +267,14 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
         if not send_doorbell(wezterm_exe=wezterm_exe, pane_id=int(pane["pane_id"]), text=text):
             _pause_relay(conn, task_id, f"doorbell_failed:{turn}")
             return "send_failed"
+        now = time.monotonic()
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             "UPDATE tui_relay_state SET last_doorbell_agent=?, last_doorbell_turn=?, "
             "last_doorbell_message_id=? WHERE room_id=?",
             (turn, turn, last_message_id, task_id),
         )
+        _mark_doorbell_sent(conn, room_id=task_id, agent=turn, now=now)
         conn.execute("COMMIT")
         return "doorbell_sent"
     finally:

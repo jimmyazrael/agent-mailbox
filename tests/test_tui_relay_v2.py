@@ -1,7 +1,14 @@
 from pathlib import Path
 
-from agent_chat import add_participant, connect_db, init_db, init_room, send_message, set_pane
-from tui_relay_v2 import doorbell_text, first_turn_text, run_once, run_watcher_loop
+from agent_chat import add_participant, connect_db, init_db, init_room, room_state_get, room_state_set, send_message, set_pane
+from tui_relay_v2 import (
+    _check_missing_outbox_after_completion,
+    _mark_outbox_imported,
+    doorbell_text,
+    first_turn_text,
+    run_once,
+    run_watcher_loop,
+)
 
 
 def _seed(root: Path):
@@ -164,6 +171,92 @@ def test_run_once_pauses_when_completed_session_has_no_outbox(monkeypatch, tmp_p
     relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id='t1'").fetchone()
     assert relay["paused"] == 1
     assert relay["pause_reason"] == "missing_outbox_after_turn:claude"
+
+
+def test_missing_outbox_grace_does_not_fire_within_doorbell_window(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    conn.execute("INSERT OR REPLACE INTO agent_sessions(room_id, agent, session_id, session_name) VALUES('t1', 'claude', 'claude-1', 's')")
+    calls = []
+    monotonic_values = iter([0.0, 20.0])
+    monkeypatch.setattr("tui_relay_v2.send_doorbell", lambda **kwargs: calls.append(kwargs) or True)
+    monkeypatch.setattr("tui_relay_v2._pane_alive", lambda *args, **kwargs: True)
+    monkeypatch.setattr("tui_relay_v2.time.monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr("tui_relay_v2.MISSING_OUTBOX_GRACE_S", 30.0)
+    monkeypatch.setattr("session_logs.find_session_log", lambda **kwargs: tmp_path / "claude.jsonl")
+    monkeypatch.setattr(
+        "session_logs.latest_completed_turn",
+        lambda path, agent: {"path": str(path), "timestamp": "t", "text": "done", "hash": "h1", "mtime": 1},
+    )
+
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "doorbell_sent"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "idle"
+    relay = conn.execute("SELECT paused FROM tui_relay_state WHERE room_id='t1'").fetchone()
+    assert relay["paused"] == 0
+    safety = room_state_get(conn, "t1", "session_log_safety")
+    assert safety["claude"]["last_doorbell_monotonic"] == 0.0
+    assert safety["claude"]["completion_hash"] == "h1"
+
+
+def test_missing_outbox_grace_fires_after_doorbell_window(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    conn.execute("INSERT OR REPLACE INTO agent_sessions(room_id, agent, session_id, session_name) VALUES('t1', 'claude', 'claude-1', 's')")
+    monotonic_values = iter([0.0, 40.0])
+    monkeypatch.setattr("tui_relay_v2.send_doorbell", lambda **kwargs: True)
+    monkeypatch.setattr("tui_relay_v2._pane_alive", lambda *args, **kwargs: True)
+    monkeypatch.setattr("tui_relay_v2.time.monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr("tui_relay_v2.MISSING_OUTBOX_GRACE_S", 30.0)
+    monkeypatch.setattr("session_logs.find_session_log", lambda **kwargs: tmp_path / "claude.jsonl")
+    monkeypatch.setattr(
+        "session_logs.latest_completed_turn",
+        lambda path, agent: {"path": str(path), "timestamp": "t", "text": "done", "hash": "h1", "mtime": 1},
+    )
+
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "doorbell_sent"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "missing_outbox_after_turn"
+    relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id='t1'").fetchone()
+    assert relay["paused"] == 1
+    assert relay["pause_reason"] == "missing_outbox_after_turn:claude"
+
+
+def test_missing_outbox_requires_tracked_doorbell(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    conn.execute("INSERT OR REPLACE INTO agent_sessions(room_id, agent, session_id, session_name) VALUES('t1', 'claude', 'claude-1', 's')")
+    monkeypatch.setattr("tui_relay_v2.MISSING_OUTBOX_GRACE_S", 0.0)
+    monkeypatch.setattr("session_logs.find_session_log", lambda **kwargs: tmp_path / "claude.jsonl")
+    monkeypatch.setattr(
+        "session_logs.latest_completed_turn",
+        lambda path, agent: {"path": str(path), "timestamp": "t", "text": "done", "hash": "h1", "mtime": 1},
+    )
+
+    assert _check_missing_outbox_after_completion(conn, root=tmp_path, task_id="t1", agent="claude", now=100.0) is None
+
+
+def test_intermediate_end_turn_does_not_trigger_premature_pause_after_handled_outbox(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    conn.execute("INSERT OR REPLACE INTO agent_sessions(room_id, agent, session_id, session_name) VALUES('t1', 'claude', 'claude-1', 's')")
+    room_state_set(conn, "t1", "session_log_safety", {"claude": {"last_doorbell_monotonic": 0.0}})
+    latest = {"hash": "h1"}
+    monkeypatch.setattr("tui_relay_v2.MISSING_OUTBOX_GRACE_S", 30.0)
+    monkeypatch.setattr("session_logs.find_session_log", lambda **kwargs: tmp_path / "claude.jsonl")
+    monkeypatch.setattr(
+        "session_logs.latest_completed_turn",
+        lambda path, agent: {
+            "path": str(path),
+            "timestamp": "t",
+            "text": "done",
+            "hash": latest["hash"],
+            "mtime": 1,
+        },
+    )
+
+    assert _check_missing_outbox_after_completion(conn, root=tmp_path, task_id="t1", agent="claude", now=5.0) is None
+    latest["hash"] = "h2"
+    _mark_outbox_imported(conn, room_id="t1", agent="claude", message_id=2, completion_hash="h2")
+
+    assert _check_missing_outbox_after_completion(conn, root=tmp_path, task_id="t1", agent="claude", now=35.0) is None
+    safety = room_state_get(conn, "t1", "session_log_safety")
+    assert safety["claude"]["handled_completion_hash"] == "h2"
+    assert "last_doorbell_monotonic" not in safety["claude"]
 
 
 def test_run_once_marks_session_completion_handled_after_outbox(monkeypatch, tmp_path):
