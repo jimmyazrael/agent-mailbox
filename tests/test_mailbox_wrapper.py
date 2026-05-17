@@ -949,6 +949,22 @@ def test_stop_close_panes_kills_task_scoped_processes(monkeypatch, tmp_path):
     assert killed_processes == [111]
 
 
+def test_task_scoped_cleanup_excludes_current_process_ancestors(monkeypatch):
+    import mailbox as mailbox_cli
+
+    monkeypatch.setattr(mailbox_cli.os, "getpid", lambda: 300)
+    killed = []
+    monkeypatch.setattr(mailbox_cli, "_run_taskkill_tree", lambda pid: killed.append(pid) or True)
+    processes = [
+        {"pid": 100, "parent_pid": 0, "name": "powershell.exe", "command_line": "powershell stop --task-id task-1"},
+        {"pid": 200, "parent_pid": 100, "name": "python.exe", "command_line": "python mailbox.py stop --task-id task-1"},
+        {"pid": 300, "parent_pid": 200, "name": "python.exe", "command_line": "pytest task-1"},
+        {"pid": 400, "parent_pid": 0, "name": "wezterm.exe", "command_line": "wezterm start --workspace agent-mailbox-task-1"},
+    ]
+    assert mailbox_cli._kill_task_scoped_pids(processes, tokens={"task-1", "agent-mailbox-task-1"}) == [400]
+    assert killed == [400]
+
+
 def test_status_detects_dead_watcher_in_running_state(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")

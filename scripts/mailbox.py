@@ -113,7 +113,7 @@ def _list_processes() -> list[dict[str, Any]]:
         return []
     ps = (
         "Get-CimInstance Win32_Process | "
-        "Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress"
+        "Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress"
     )
     try:
         rv = subprocess.run(
@@ -145,6 +145,7 @@ def _list_processes() -> list[dict[str, Any]]:
         out.append(
             {
                 "pid": pid,
+                "parent_pid": int(row.get("ParentProcessId") or 0),
                 "name": str(row.get("Name") or ""),
                 "command_line": str(row.get("CommandLine") or ""),
             }
@@ -168,15 +169,35 @@ def _is_agent_mailbox_process(proc: dict[str, Any]) -> bool:
 
 def _kill_task_scoped_pids(processes: list[dict[str, Any]], *, tokens: set[str]) -> list[int]:
     killed: list[int] = []
+    protected = _current_process_family(processes)
     for proc in processes:
         pid = int(proc["pid"])
-        if pid == os.getpid():
+        if pid in protected:
             continue
         command = str(proc.get("command_line") or "").lower()
         if command and any(token and token in command for token in tokens):
             if _run_taskkill_tree(pid):
                 killed.append(pid)
     return killed
+
+
+def _current_process_family(processes: list[dict[str, Any]]) -> set[int]:
+    """Return current process plus ancestors so task-scoped cleanup cannot kill its caller."""
+    parents: dict[int, int] = {}
+    for proc in processes:
+        try:
+            parents[int(proc["pid"])] = int(proc.get("parent_pid") or 0)
+        except (TypeError, ValueError):
+            continue
+    protected = {os.getpid()}
+    pid = os.getpid()
+    while True:
+        parent = parents.get(pid)
+        if not parent or parent in protected:
+            break
+        protected.add(parent)
+        pid = parent
+    return protected
 
 
 def _kill_task_scoped_processes(*, task_id: str, workspace: str, root: Path, project_cwd: Path) -> list[int]:
@@ -1348,9 +1369,10 @@ def cmd_doctor_wezterm(args) -> int:
 def _reset_plan(processes: list[dict[str, Any]], *, task_scoped: bool, global_scope: bool, task_tokens: set[str] | None = None) -> list[dict[str, Any]]:
     plan: list[dict[str, Any]] = []
     tokens = {token.lower() for token in (task_tokens or set()) if token}
+    protected = _current_process_family(processes)
     for proc in _wezterm_processes(processes):
         pid = int(proc["pid"])
-        if pid == os.getpid():
+        if pid in protected:
             continue
         name = str(proc.get("name") or "").lower()
         command = str(proc.get("command_line") or "").lower()
