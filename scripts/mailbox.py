@@ -192,7 +192,6 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             sessions["claude"]["session_id"],
             sessions["claude"]["session_name"],
         ]
-        marker_prompt = f"{sessions['codex']['discovery_marker']}; read mailbox task {task_id} and proceed."
         codex_cmd = [
             "cmd",
             "/c",
@@ -200,7 +199,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             task_id,
             str(root),
             str(project_cwd),
-            marker_prompt,
+            "",
         ]
         fake = os.environ.get("AGENT_MAILBOX_FAKE_PANE_IDS")
         if fake:

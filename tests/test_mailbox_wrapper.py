@@ -188,6 +188,30 @@ def test_launch_tui_fake_panes(monkeypatch, tmp_path):
     assert relay["pause_reason"] is None
 
 
+def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    calls = []
+
+    def fake_launch_workspace(**kwargs):
+        calls.append(kwargs)
+        return {"workspace": "w", "claude_pane_id": 11, "codex_pane_id": 12, "spawned_at": "now"}
+
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
+    monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
+
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(["launch-tui", "--root", str(root), "--task-id", task_id, "--format", "json"])
+    assert mailbox_cli.cmd_launch_tui(args) == 0
+    codex_cmd = calls[0]["codex_cmd"]
+    assert codex_cmd[-1] == ""
+    assert not any("read mailbox task" in part for part in codex_cmd)
+
+
 def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
     root = tmp_path / "mb"
     env = dict(

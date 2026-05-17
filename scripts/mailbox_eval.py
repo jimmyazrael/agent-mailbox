@@ -96,6 +96,16 @@ def _approve_if_prompted(wezterm_exe: Path, pane_id: int) -> bool:
     return True
 
 
+def _capture_pane_snapshots(wezterm_exe: Path, pane_ids: list[int], out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for pane_id in pane_ids:
+        try:
+            text = _get_pane_text(wezterm_exe, pane_id)
+        except Exception as exc:
+            text = f"<failed to capture pane {pane_id}: {exc}>"
+        (out_dir / f"pane-{pane_id}.txt").write_text(text, encoding="utf-8", newline="\n")
+
+
 def _write_workspace(project: Path, files: dict[str, str]) -> dict[str, str]:
     hashes: dict[str, str] = {}
     for rel, text in files.items():
@@ -305,7 +315,9 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
     )
     if relay_rv.returncode != 0:
         raise RuntimeError(relay_rv.stderr or relay_rv.stdout)
+    relay_pane_id = None
     if relay_rv.stdout.strip().isdigit():
+        relay_pane_id = int(relay_rv.stdout.strip())
         _run_mailbox(
             "repair",
             "--root",
@@ -316,8 +328,9 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
             "--agent",
             "relay",
             "--pane-id",
-            relay_rv.stdout.strip(),
+            str(relay_pane_id),
         )
+    launch["relay_pane_id"] = relay_pane_id
     return task_id, launch, wezterm_exe
 
 
@@ -370,6 +383,11 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             scenario,
             wezterm_exe=wezterm_exe,
             pane_ids=[int(launch["claude_pane_id"]), int(launch["codex_pane_id"])],
+        )
+        _capture_pane_snapshots(
+            wezterm_exe,
+            [int(x) for x in (launch.get("claude_pane_id"), launch.get("codex_pane_id"), launch.get("relay_pane_id")) if x is not None],
+            work_root / "pane-snapshots",
         )
         if terminal != scenario.get("success", {}).get("terminal_status", "final"):
             return ScenarioResult(scenario["id"], scenario["name"], "fail", [f"terminal status {terminal!r}"], str(work_root), task_id)
