@@ -626,6 +626,7 @@ def _read_panel_state(root: Path, task_id: str) -> dict[str, Any]:
         latest = conn.execute("SELECT * FROM messages WHERE room_id=? ORDER BY id DESC LIMIT 1", (resolved,)).fetchone()
         return {
             "task_id": resolved,
+            "root": str(root),
             "room": room,
             "relay": dict(relay) if relay else {},
             "sessions": sessions,
@@ -646,6 +647,7 @@ def _format_panel_status(state: dict[str, Any]) -> str:
         "Agent Mailbox Control Panel",
         "",
         f"Task: {state['task_id']}",
+        f"Root: {state['root']}",
         f"Status: {room['status']}    Turn: {room['turn']}    Round: {room['round']}    Last message: {room['last_message_id']}",
         f"Paused: {bool(relay.get('paused', 0))}    Reason: {relay.get('pause_reason') or ''}",
         f"Panes: {', '.join(f'{k}={v}' for k, v in sorted(panes.items())) or '(none)'}",

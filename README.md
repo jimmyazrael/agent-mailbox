@@ -71,7 +71,27 @@ If any of these are unclear and risky to assume, the orchestrator should ask the
 
 ## Useful Commands
 
+`<root>` and `<id>` come from the launch output and the control panel:
+
+- `--root <root>` is the mailbox storage directory you passed to `mailbox.py start`, such as `F:\Programs\LocalAgentConcept\.agent-mailbox`.
+- `--task-id <id>` is printed by `mailbox.py start` as `task_id` and shown in the control panel as `Task: ...`.
+- The control panel also prints `Root: ...`, so if the original terminal output is gone, use the control panel tab to recover both values.
+- If you know the root but not the task id, run `python scripts\mailbox.py list --root <root> --active-only`.
+
+Example startup output:
+
+```json
+{
+  "ok": true,
+  "data": {
+    "task_id": "spc-dogfood-20260517-1500",
+    "root": "F:\\Programs\\LocalAgentConcept\\.agent-mailbox"
+  }
+}
+```
+
 ```powershell
+python scripts\mailbox.py list --root <root> --active-only
 python scripts\mailbox.py status --root <root> --task-id <id>
 python scripts\mailbox.py show --root <root> --task-id <id> --tail 5 --body
 python scripts\mailbox.py watch-chat --root <root> --task-id <id>

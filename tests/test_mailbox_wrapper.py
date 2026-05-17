@@ -614,6 +614,7 @@ def test_control_panel_parser_defaults_and_once_status(tmp_path):
     assert rv.returncode == 0, rv.stderr
     assert "Agent Mailbox Control Panel" in rv.stdout
     assert f"Task: {task_id}" in rv.stdout
+    assert f"Root: {root}" in rv.stdout
 
 
 def test_control_panel_actions_use_mailbox_subprocess(monkeypatch, tmp_path):
