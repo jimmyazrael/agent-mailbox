@@ -921,10 +921,13 @@ def test_stop_close_panes_kills_task_scoped_processes(monkeypatch, tmp_path):
     killed_processes = []
     killed_panes = []
     monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
-    monkeypatch.setattr(
-        "tui_launcher.run_wezterm_cli",
-        lambda argv, **kwargs: killed_panes.append(int(argv[argv.index("--pane-id") + 1])) or subprocess.CompletedProcess(argv, 0, "", ""),
-    )
+
+    def fake_wezterm_cli(argv, **kwargs):
+        if "kill-pane" in argv:
+            killed_panes.append(int(argv[argv.index("--pane-id") + 1]))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.run_wezterm_cli", fake_wezterm_cli)
     monkeypatch.setattr(mailbox_cli.os, "name", "nt")
     monkeypatch.setattr(mailbox_cli.os, "getpid", lambda: 999)
     monkeypatch.setattr(mailbox_cli, "_run_taskkill_tree", lambda pid: killed_processes.append(pid) or True)
@@ -947,6 +950,86 @@ def test_stop_close_panes_kills_task_scoped_processes(monkeypatch, tmp_path):
     assert mailbox_cli.cmd_stop(args) == 0
     assert killed_panes == [123]
     assert killed_processes == [111]
+
+
+def test_stop_close_panes_returns_per_pane_outcomes(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id) VALUES(?, 'claude', 11)", (task_id,))
+    conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id) VALUES(?, 'codex', 12)", (task_id,))
+    conn.close()
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr(mailbox_cli, "_kill_task_scoped_processes", lambda **kwargs: [])
+
+    def fake_wezterm_cli(argv, **kwargs):
+        if "kill-pane" in argv and argv[argv.index("--pane-id") + 1] == "12":
+            return subprocess.CompletedProcess(argv, 1, "", "no such pane")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.run_wezterm_cli", fake_wezterm_cli)
+    args = mailbox_cli.build_parser().parse_args(["stop", "--root", str(root), "--task-id", task_id, "--close-panes", "--yes", "--format", "json"])
+    assert mailbox_cli.cmd_stop(args) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["pane_results"] == [
+        {"pane_id": 11, "rc": 0, "stderr": "", "stdout": ""},
+        {"pane_id": 12, "rc": 1, "stderr": "no such pane", "stdout": ""},
+    ]
+    assert data["killed_pane_ids"] == [11]
+    assert data["already_gone_pane_ids"] == [12]
+
+
+def test_stop_close_panes_fails_loud_when_kill_pane_fails_unexpectedly(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id) VALUES(?, 'claude', 11)", (task_id,))
+    conn.close()
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr(mailbox_cli, "_kill_task_scoped_processes", lambda **kwargs: [])
+
+    def fake_wezterm_cli(argv, **kwargs):
+        if "kill-pane" in argv:
+            return subprocess.CompletedProcess(argv, 1, "", "permission denied")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.run_wezterm_cli", fake_wezterm_cli)
+    args = mailbox_cli.build_parser().parse_args(["stop", "--root", str(root), "--task-id", task_id, "--close-panes", "--yes", "--format", "json"])
+    assert mailbox_cli.cmd_stop(args) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["error"] == "partial_pane_cleanup"
+    assert out["data"]["pane_results"][0]["stderr"] == "permission denied"
+
+
+def test_stop_fails_loud_when_mux_unhealthy_after_cleanup(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id) VALUES(?, 'claude', 11)", (task_id,))
+    conn.close()
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr(mailbox_cli, "_kill_task_scoped_processes", lambda **kwargs: [])
+
+    def fake_wezterm_cli(argv, **kwargs):
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 124, "", "wezterm cli timed out")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.run_wezterm_cli", fake_wezterm_cli)
+    args = mailbox_cli.build_parser().parse_args(["stop", "--root", str(root), "--task-id", task_id, "--close-panes", "--yes", "--format", "json"])
+    assert mailbox_cli.cmd_stop(args) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["error"] == "mux_unhealthy_after_cleanup"
+    assert out["data"]["mux_health"]["stderr"] == "wezterm cli timed out"
 
 
 def test_task_scoped_cleanup_excludes_current_process_ancestors(monkeypatch):
@@ -1198,6 +1281,52 @@ def test_reset_wezterm_global_requires_yes_global(monkeypatch, tmp_path, capsys)
     data = json.loads(capsys.readouterr().out)["data"]
     assert data["killed_process_ids"] == [1]
     assert killed == [1]
+
+
+def test_reset_wezterm_task_id_kills_db_panes_then_processes(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    project = tmp_path / "project"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(project), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id) VALUES(?, 'claude', 11)", (task_id,))
+    conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id) VALUES(?, 'codex', 12)", (task_id,))
+    room = conn.execute("SELECT workspace FROM rooms WHERE id=?", (task_id,)).fetchone()
+    workspace = room["workspace"]
+    conn.close()
+    killed_processes = []
+    killed_panes = []
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr(mailbox_cli.os, "getpid", lambda: 999)
+    monkeypatch.setattr(mailbox_cli, "_run_taskkill_tree", lambda pid: killed_processes.append(pid) or True)
+    monkeypatch.setattr(
+        mailbox_cli,
+        "_list_processes",
+        lambda: [
+            {"pid": 111, "name": "wezterm.exe", "command_line": f"wezterm start --workspace {workspace}", "parent_pid": 0},
+            {"pid": 222, "name": "wezterm.exe", "command_line": "wezterm start --workspace unrelated", "parent_pid": 0},
+            {"pid": 999, "name": "python.exe", "command_line": "pytest", "parent_pid": 0},
+        ],
+    )
+
+    def fake_wezterm_cli(argv, **kwargs):
+        killed_panes.append(int(argv[argv.index("--pane-id") + 1]))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.run_wezterm_cli", fake_wezterm_cli)
+    args = mailbox_cli.build_parser().parse_args(["reset-wezterm", "--root", str(root), "--task-id", task_id, "--yes", "--format", "json"])
+    assert mailbox_cli.cmd_reset_wezterm(args) == 0
+    data = json.loads(capsys.readouterr().out)["data"]
+    assert data["killed_pane_ids"] == [11, 12]
+    assert data["pane_results"] == [
+        {"pane_id": 11, "rc": 0, "stderr": "", "stdout": ""},
+        {"pane_id": 12, "rc": 0, "stderr": "", "stdout": ""},
+    ]
+    assert data["killed_process_ids"] == [111]
+    assert killed_panes == [11, 12]
+    assert killed_processes == [111]
 
 
 def test_archive_terminal_task_removes_live_rows_and_writes_archive(tmp_path):

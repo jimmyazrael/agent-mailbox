@@ -212,6 +212,70 @@ def _kill_task_scoped_processes(*, task_id: str, workspace: str, root: Path, pro
     return _kill_task_scoped_pids(_list_processes(), tokens=tokens)
 
 
+def _pane_gone(stderr: str) -> bool:
+    text = (stderr or "").lower()
+    return "no such pane" in text or "not found" in text
+
+
+def _kill_bound_panes(*, wezterm_exe: Path, pane_ids: list[int]) -> tuple[list[dict[str, Any]], list[int], list[int], list[dict[str, Any]]]:
+    from pane_control import build_kill_pane_argv
+    from tui_launcher import run_wezterm_cli
+
+    pane_results: list[dict[str, Any]] = []
+    killed_panes: list[int] = []
+    already_gone_panes: list[int] = []
+    failed_panes: list[dict[str, Any]] = []
+    for pane_id in pane_ids:
+        rv = run_wezterm_cli(
+            build_kill_pane_argv(wezterm_exe=wezterm_exe, pane_id=pane_id),
+            timeout=15,
+        )
+        result = {
+            "pane_id": pane_id,
+            "rc": rv.returncode,
+            "stderr": (rv.stderr or "").strip(),
+            "stdout": (rv.stdout or "").strip(),
+        }
+        pane_results.append(result)
+        if rv.returncode == 0:
+            killed_panes.append(pane_id)
+        elif _pane_gone(result["stderr"]):
+            already_gone_panes.append(pane_id)
+        else:
+            failed_panes.append(result)
+    return pane_results, killed_panes, already_gone_panes, failed_panes
+
+
+def _mux_health_after_cleanup(wezterm_exe: Path) -> dict[str, Any]:
+    from pane_control import build_list_argv
+    from tui_launcher import run_wezterm_cli
+
+    rv = run_wezterm_cli(build_list_argv(wezterm_exe=wezterm_exe), timeout=5)
+    return {
+        "ok": rv.returncode == 0,
+        "rc": rv.returncode,
+        "stderr": (rv.stderr or "").strip(),
+        "stdout": (rv.stdout or "").strip(),
+    }
+
+
+def _task_bound_pane_ids(root: Path, task_id: str | None) -> tuple[str | None, list[int]]:
+    if not task_id:
+        return None, []
+    conn = connect_db(root)
+    try:
+        resolved = _resolve(conn, task_id)
+        pane_ids = [
+            int(row["pane_id"])
+            for row in conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_id IS NOT NULL", (resolved,)).fetchall()
+        ]
+        return resolved, pane_ids
+    except Exception:
+        return task_id, []
+    finally:
+        conn.close()
+
+
 def _root(args) -> Path:
     return (args.root or default_root()).expanduser()
 
@@ -1419,26 +1483,46 @@ def cmd_reset_wezterm(args) -> int:
     root = _root(args)
     processes = _list_processes()
     tokens = _task_reset_tokens(root, args.task_id) if args.task_id else set()
+    resolved_task_id, pane_ids = _task_bound_pane_ids(root, args.task_id) if args.task_id else (None, [])
     plan = _reset_plan(
         processes,
         task_scoped=bool(args.task_scoped),
         global_scope=bool(args.global_scope),
         task_tokens=tokens,
     )
+    pane_results: list[dict[str, Any]] = []
+    killed_panes: list[int] = []
+    already_gone_panes: list[int] = []
+    failed_panes: list[dict[str, Any]] = []
     killed: list[int] = []
     if not args.dry_run:
+        if args.task_id and pane_ids:
+            from tui_launcher import find_wezterm
+
+            pane_results, killed_panes, already_gone_panes, failed_panes = _kill_bound_panes(
+                wezterm_exe=find_wezterm(),
+                pane_ids=pane_ids,
+            )
         for proc in plan:
             if _run_taskkill_tree(int(proc["pid"])):
                 killed.append(int(proc["pid"]))
+    ok = not failed_panes
+    error = "partial_pane_cleanup" if failed_panes else None
     return _emit(
         args,
-        ok=True,
+        ok=ok,
         data={
             "dry_run": bool(args.dry_run),
             "scope": "global" if args.global_scope else ("task_id" if args.task_id else "task_scoped"),
+            "task_id": resolved_task_id,
+            "pane_ids": pane_ids,
+            "pane_results": pane_results,
+            "killed_pane_ids": killed_panes,
+            "already_gone_pane_ids": already_gone_panes,
             "planned": plan,
             "killed_process_ids": killed,
         },
+        error=error,
     )
 
 
@@ -1790,36 +1874,46 @@ def cmd_stop(args) -> int:
     if args.close_panes:
         if not args.yes:
             return _emit(args, ok=False, error="--close-panes requires --yes")
-        from tui_launcher import find_wezterm, run_wezterm_cli
-        from pane_control import build_kill_pane_argv
+        from tui_launcher import find_wezterm
 
         wez = find_wezterm()
-        killed_panes: list[int] = []
-        for pane_id in pane_ids:
-            rv = run_wezterm_cli(
-                build_kill_pane_argv(wezterm_exe=wez, pane_id=pane_id),
-                timeout=15,
-            )
-            if rv.returncode == 0:
-                killed_panes.append(pane_id)
+        pane_results, killed_panes, already_gone_panes, failed_panes = _kill_bound_panes(
+            wezterm_exe=wez,
+            pane_ids=pane_ids,
+        )
         killed_processes = _kill_task_scoped_processes(
             task_id=task_id,
             workspace=workspace,
             root=root,
             project_cwd=project_cwd,
         )
+        mux_health = _mux_health_after_cleanup(wez)
     else:
+        pane_results = []
         killed_panes = []
+        already_gone_panes = []
+        failed_panes = []
         killed_processes = []
+        mux_health = None
+    ok = not failed_panes and (mux_health is None or bool(mux_health["ok"]))
+    error = None
+    if failed_panes:
+        error = "partial_pane_cleanup"
+    elif mux_health is not None and not bool(mux_health["ok"]):
+        error = "mux_unhealthy_after_cleanup"
     return _emit(
         args,
-        ok=True,
+        ok=ok,
         data={
             "task_id": task_id,
             "status": "stopped",
+            "pane_results": pane_results,
             "killed_pane_ids": killed_panes,
+            "already_gone_pane_ids": already_gone_panes,
             "killed_process_ids": killed_processes,
+            "mux_health": mux_health,
         },
+        error=error,
     )
 
 
