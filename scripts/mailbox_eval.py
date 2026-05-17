@@ -200,6 +200,45 @@ def _last_message_from(root: Path, task_id: str, agent: str) -> int:
         conn.close()
 
 
+def _participation_notes(conn, task_id: str, success: dict[str, Any]) -> list[str]:
+    notes: list[str] = []
+    outbox_counts = {
+        row["from_agent"]: int(row["n"])
+        for row in conn.execute(
+            "SELECT from_agent, COUNT(*) AS n FROM messages WHERE room_id=? AND kind='outbox' GROUP BY from_agent",
+            (task_id,),
+        ).fetchall()
+    }
+    for agent in success.get("required_outbox_authors", []):
+        if outbox_counts.get(agent, 0) < 1:
+            notes.append(f"missing outbox from required author: {agent}")
+    for agent, minimum in success.get("min_outbox_messages_by_author", {}).items():
+        if outbox_counts.get(agent, 0) < int(minimum):
+            notes.append(f"outbox count for {agent}: {outbox_counts.get(agent, 0)}, expected at least {minimum}")
+    for agent, statuses in success.get("required_outbox_statuses_by_author", {}).items():
+        seen = {
+            row["status"]
+            for row in conn.execute(
+                "SELECT status FROM messages WHERE room_id=? AND kind='outbox' AND from_agent=?",
+                (task_id, agent),
+            ).fetchall()
+        }
+        for status in statuses:
+            if status not in seen:
+                notes.append(f"missing {status} outbox from {agent}")
+    final_from = success.get("final_from_agent")
+    if final_from:
+        terminal_status = success.get("terminal_status", "final")
+        row = conn.execute(
+            "SELECT from_agent FROM messages WHERE room_id=? AND status=? ORDER BY id DESC LIMIT 1",
+            (task_id, terminal_status),
+        ).fetchone()
+        actual = row["from_agent"] if row else None
+        if actual != final_from:
+            notes.append(f"{terminal_status} message author: {actual}, expected {final_from}")
+    return notes
+
+
 def _send_extra_doorbells(root: Path, task_id: str, count: int) -> str | None:
     for _ in range(max(0, count)):
         turn = _current_turn(root, task_id)
@@ -649,6 +688,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             notes.append(f"too many messages: {message_count}")
         if success.get("codex_discovery_status") and sessions.get("codex", {}).get("discovery_status") != success["codex_discovery_status"]:
             notes.append(f"codex discovery status: {sessions.get('codex', {}).get('discovery_status')}")
+        notes.extend(_participation_notes(conn, task_id, success))
         for rel in success.get("forbidden_file_changes", []):
             if _file_fingerprint(project, rel) != fingerprints.get(rel):
                 notes.append(f"forbidden file changed: {rel}")

@@ -145,6 +145,65 @@ def test_mailbox_eval_terminal_room_skips_extra_doorbell(monkeypatch, tmp_path):
     assert calls == []
 
 
+def test_mailbox_eval_participation_notes_catch_single_agent_false_pass(tmp_path):
+    root = tmp_path / "mb"
+    init_db(root)
+    conn = connect_db(root)
+    init_room(conn, room_id="t1", name="T1", purpose="p", project_cwd=tmp_path, workspace="w", first_turn="claude")
+    add_participant(conn, "t1", "claude")
+    add_participant(conn, "t1", "codex")
+    send_message(
+        conn,
+        root=root,
+        room_id="t1",
+        from_agent="claude",
+        to_agent="codex",
+        kind="outbox",
+        status="blocked",
+        summary="needs code",
+        body="blocked",
+    )
+    send_message(
+        conn,
+        root=root,
+        room_id="t1",
+        from_agent="claude",
+        to_agent="codex",
+        kind="outbox",
+        status="final",
+        summary="done",
+        body="R-2026-ALPHA",
+    )
+
+    notes = mailbox_eval._participation_notes(
+        conn,
+        "t1",
+        {
+            "terminal_status": "final",
+            "required_outbox_authors": ["claude", "codex"],
+            "min_outbox_messages_by_author": {"claude": 2, "codex": 1},
+            "required_outbox_statuses_by_author": {"claude": ["blocked", "continue"], "codex": ["final"]},
+            "final_from_agent": "codex",
+        },
+    )
+
+    assert "missing outbox from required author: codex" in notes
+    assert "outbox count for codex: 0, expected at least 1" in notes
+    assert "missing continue outbox from claude" in notes
+    assert "missing final outbox from codex" in notes
+    assert "final message author: claude, expected codex" in notes
+
+
+def test_am02_requires_codex_final_participation():
+    data = json.loads((SCENARIOS / "02-blocked-resume.json").read_text(encoding="utf-8"))
+    success = data["success"]
+    assert success["final_from_agent"] == "codex"
+    assert "codex" in success["required_outbox_authors"]
+    assert success["min_outbox_messages_by_author"]["codex"] >= 1
+    assert "final" in success["required_outbox_statuses_by_author"]["codex"]
+    assert "Claude-only final is a failure" in data["context"]
+
+
 def test_mailbox_eval_reports_paused_relay_reason(tmp_path):
     root = tmp_path / "mb"
     init_db(root)

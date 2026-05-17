@@ -4,19 +4,37 @@
   "category": "blocked-resume",
   "difficulty": "hard",
   "relay_version": "v2-outbox",
-  "goal": "Agents must write a blocked outbox message for missing information, then resume after DB-only user injection appears in chat monitor.",
+  "goal": "Claude must write a blocked outbox message for missing information, then after DB-only user injection hand off to Codex; Codex must verify the injected release code and write the final outbox.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
     "README.md": "# Release Gate\n\nThe required release code is intentionally absent. Agents must ask for it.\n"
   },
-  "context": "The release code is required but not present in the workspace. The correct behavior is to write an outbox file with status: blocked and a blocked_reason asking for the code, wait for user injection in chat monitor, then continue via outbox and reach final.",
+  "context": "The release code is required but not present in the workspace. The correct behavior is: Claude writes an outbox file with status: blocked and a blocked_reason asking for the code; after user injection appears in chat monitor, Claude must write a continue outbox to Codex with Owner: codex and the injected release code; Codex must verify the code from the transcript and write the final outbox. A Claude-only final is a failure.",
   "inject_on_blocked": {
     "summary": "release code supplied",
     "content": "Release code: R-2026-ALPHA. Continue."
   },
   "success": {
     "must_observe_status": "blocked",
+    "required_outbox_authors": [
+      "claude",
+      "codex"
+    ],
+    "min_outbox_messages_by_author": {
+      "claude": 2,
+      "codex": 1
+    },
+    "required_outbox_statuses_by_author": {
+      "claude": [
+        "blocked",
+        "continue"
+      ],
+      "codex": [
+        "final"
+      ]
+    },
+    "final_from_agent": "codex",
     "required_transcript_terms": [
       "R-2026-ALPHA"
     ],
