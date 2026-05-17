@@ -7,8 +7,6 @@ description: Coordinate Codex and Claude Code through a SQLite-backed mailbox wi
 
 Use this skill for two-agent collaboration where Codex and Claude Code should discuss, review, or implement a task while the user keeps native TUI visibility and control.
 
-## Quick Start
-
 ## Day-To-Day Invocation
 
 The user should not need to remember mailbox flags or a context checklist. When the user says something like:
