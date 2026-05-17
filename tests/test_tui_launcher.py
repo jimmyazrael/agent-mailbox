@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import tui_launcher
 from pane_control import build_spawn_argv
 from tui_launcher import (
     attach_workspace_gui,
@@ -35,7 +36,7 @@ def test_find_wezterm_raises(monkeypatch):
 def test_ensure_mux_alive_starts_when_needed(monkeypatch, tmp_path):
     calls = []
 
-    def fake_run(argv, **kwargs):
+    def fake_list(argv, **kwargs):
         calls.append(argv)
         if "list" in argv and len(calls) == 1:
             return subprocess.CompletedProcess(argv, 1, "", "no mux")
@@ -49,7 +50,7 @@ def test_ensure_mux_alive_starts_when_needed(monkeypatch, tmp_path):
 
         return P()
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(tui_launcher, "_run_wezterm_list", fake_list)
     monkeypatch.setattr("subprocess.Popen", fake_popen)
     wez = tmp_path / "wezterm.exe"
     wez.write_bytes(b"")
@@ -58,8 +59,8 @@ def test_ensure_mux_alive_starts_when_needed(monkeypatch, tmp_path):
 
 
 def test_ensure_mux_alive_fails_fast_when_wezterm_list_hangs(monkeypatch, tmp_path):
-    def fake_run(argv, **kwargs):
-        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+    def fake_list(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 124, "", "wezterm list timed out")
 
     def fake_popen(argv, **kwargs):
         class P:
@@ -67,7 +68,7 @@ def test_ensure_mux_alive_fails_fast_when_wezterm_list_hangs(monkeypatch, tmp_pa
 
         return P()
 
-    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(tui_launcher, "_run_wezterm_list", fake_list)
     monkeypatch.setattr("subprocess.Popen", fake_popen)
     wez = tmp_path / "wezterm.exe"
     wez.write_bytes(b"")

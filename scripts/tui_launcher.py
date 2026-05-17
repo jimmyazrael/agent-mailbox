@@ -43,23 +43,45 @@ def _debug_timing(message: str) -> None:
         print(f"[agent-mailbox timing] {message}", file=sys.stderr, flush=True)
 
 
-def _run_wezterm_list(list_argv: List[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
-    try:
-        return subprocess.run(
-            list_argv,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+def _kill_process_tree(proc: subprocess.Popen[str]) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
             stdin=subprocess.DEVNULL,
-            timeout=timeout,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
         )
-    except subprocess.TimeoutExpired as exc:
+    else:
+        proc.kill()
+
+
+def _run_wezterm_list(list_argv: List[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
+    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    proc = subprocess.Popen(
+        list_argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        creationflags=creationflags,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(list_argv, proc.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = "", ""
         return subprocess.CompletedProcess(
             list_argv,
             124,
-            exc.stdout or "",
-            f"wezterm list timed out after {timeout}s",
+            stdout or "",
+            (stderr or "") + f"wezterm list timed out after {timeout}s",
         )
 
 
