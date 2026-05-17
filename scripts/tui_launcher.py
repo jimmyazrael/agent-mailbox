@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pane_control import build_list_argv, build_spawn_argv, build_split_argv
+from pane_control import build_list_argv, build_spawn_argv, build_split_argv, build_start_argv
 
 WELL_KNOWN_PATHS = [
     Path("C:/Program Files/WezTerm/wezterm.exe"),
@@ -97,6 +97,25 @@ def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
     )
     rv.check_returncode()
     return [int(pane["pane_id"]) for pane in lookup_pane(parse_wezterm_list(rv.stdout), workspace=workspace)]
+
+
+def attach_workspace_gui(wezterm_exe: Path, workspace: str, cwd: Path) -> None:
+    """Make the task workspace visible in a GUI window.
+
+    `wezterm cli --prefer-mux spawn` can create panes in the mux without
+    reliably surfacing a Windows GUI. Starting with `--attach` is the visible
+    contract users expect from mailbox start/launch-tui.
+    """
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(
+        build_start_argv(wezterm_exe=wezterm_exe, workspace=workspace, cwd=cwd, attach=True),
+        creationflags=creationflags,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
 
 
 def launch_workspace(

@@ -278,7 +278,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             chat_pane_id = parts[3] if getattr(args, "with_chat", False) and len(parts) > 3 else None
             control_pane_id = parts[4] if getattr(args, "with_control_panel", False) and len(parts) > 4 else None
         else:
-            from tui_launcher import ensure_mux_alive, find_wezterm, launch_workspace
+            from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_wezterm, launch_workspace
 
             wez = find_wezterm()
             ensure_mux_alive(wez)
@@ -344,6 +344,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                     str(scripts / "mailbox.py"),
                 ]
                 control_pane_id = _spawn_workspace_tab(wezterm_exe=wez, workspace=workspace, cwd=project_cwd, cmd=control_cmd)
+            attach_workspace_gui(wez, workspace, project_cwd)
         set_pane(conn, task_id, "claude", pane_id=result["claude_pane_id"])
         set_pane(conn, task_id, "codex", pane_id=result["codex_pane_id"])
         if relay_pane_id is not None:

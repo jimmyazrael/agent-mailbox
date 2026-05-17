@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from pane_control import build_spawn_argv
-from tui_launcher import ensure_mux_alive, find_wezterm, launch_workspace, lookup_pane, parse_wezterm_list
+from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_wezterm, launch_workspace, lookup_pane, parse_wezterm_list
 
 
 def test_find_wezterm_uses_path(monkeypatch, tmp_path):
@@ -80,6 +80,29 @@ def test_launch_workspace_captures_pane_ids(monkeypatch, tmp_path):
     )
     assert result["claude_pane_id"] == 11
     assert result["codex_pane_id"] == 12
+
+
+def test_attach_workspace_gui_starts_visible_client(monkeypatch, tmp_path):
+    calls = []
+
+    class P:
+        pid = 123
+
+    def fake_popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return P()
+
+    monkeypatch.setattr("subprocess.Popen", fake_popen)
+    wez = tmp_path / "wezterm.exe"
+    wez.write_bytes(b"")
+    attach_workspace_gui(wez, "agent-mailbox-t1", tmp_path)
+    argv, kwargs = calls[0]
+    assert argv[:2] == [str(wez), "start"]
+    assert "--workspace" in argv and "agent-mailbox-t1" in argv
+    assert "--attach" in argv
+    assert "--cwd" in argv and str(tmp_path) in argv
+    assert kwargs["stdout"] is subprocess.DEVNULL
+    assert kwargs["stderr"] is subprocess.DEVNULL
 
 
 def test_spawn_existing_window_uses_window_id_not_workspace(tmp_path):

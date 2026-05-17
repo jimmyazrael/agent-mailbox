@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pane_control import build_activate_pane_argv, build_list_argv, build_send_text_argv, build_spawn_argv
+from pane_control import build_activate_pane_argv, build_list_argv, build_send_text_argv, build_spawn_argv, build_start_argv
 
 
 WEZ = Path("C:/Program Files/WezTerm/wezterm.exe")
@@ -34,3 +34,11 @@ def test_build_activate_pane_argv():
     argv = build_activate_pane_argv(wezterm_exe=WEZ, pane_id=42)
     assert "activate-pane" in argv
     assert "--pane-id" in argv and "42" in argv
+
+
+def test_build_start_argv_attach_workspace():
+    argv = build_start_argv(wezterm_exe=WEZ, workspace="agent-mailbox-t1", cwd=Path("F:/proj"), attach=True)
+    assert argv[:2] == [str(WEZ), "start"]
+    assert "--workspace" in argv and "agent-mailbox-t1" in argv
+    assert "--attach" in argv
+    assert "--cwd" in argv and str(Path("F:/proj")) in argv

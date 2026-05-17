@@ -30,6 +30,24 @@ def build_spawn_argv(
     return argv
 
 
+def build_start_argv(
+    *,
+    wezterm_exe: Path,
+    workspace: str,
+    cwd: Optional[Path] = None,
+    attach: bool = False,
+    always_new_process: bool = False,
+) -> List[str]:
+    argv = [str(wezterm_exe), "start", "--workspace", workspace]
+    if attach:
+        argv.append("--attach")
+    if always_new_process:
+        argv.append("--always-new-process")
+    if cwd is not None:
+        argv += ["--cwd", str(cwd)]
+    return argv
+
+
 def build_split_argv(
     *,
     wezterm_exe: Path,

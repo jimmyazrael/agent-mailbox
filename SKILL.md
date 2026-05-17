@@ -83,6 +83,8 @@ python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py start --pre
 
 This opens a WezTerm workspace with Claude, Codex, relay, and read-only chat transcript views. The bootstrap session returns immediately; the panes are the live interface.
 
+The WezTerm GUI must be visibly surfaced after launch. If `mailbox.py start` returns pane ids but no window appears, treat that as a launcher failure and attach manually with `wezterm start --workspace <workspace> --attach`, then fix the launcher before relying on the task.
+
 Use `--no-chat` only when you explicitly do not want the transcript monitor:
 
 ```powershell

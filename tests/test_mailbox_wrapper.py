@@ -393,6 +393,7 @@ def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_p
     monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
     monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
     monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
 
     import mailbox as mailbox_cli
@@ -425,6 +426,7 @@ def test_launch_tui_chat_uses_existing_window_id(monkeypatch, tmp_path):
     monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
     monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
     monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
     monkeypatch.setattr("subprocess.run", fake_run)
 
@@ -442,6 +444,37 @@ def test_launch_tui_chat_uses_existing_window_id(monkeypatch, tmp_path):
     assert chat["pane_id"] == 44
     control = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='control'", (task_id,)).fetchone()
     assert control["pane_id"] == 44
+
+
+def test_launch_tui_attaches_visible_gui_after_panes(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    workspace = f"agent-mailbox-{task_id}"
+    attach_calls = []
+
+    def fake_launch_workspace(**kwargs):
+        return {"workspace": workspace, "claude_pane_id": 11, "codex_pane_id": 12, "spawned_at": "now"}
+
+    def fake_run(argv, **kwargs):
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps([{"pane_id": 11, "workspace": workspace, "window_id": 99}]), "")
+        if "spawn" in argv:
+            return subprocess.CompletedProcess(argv, 0, "44\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
+    monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda wez, ws, cwd: attach_calls.append((wez, ws, cwd)))
+    monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(["launch-tui", "--root", str(root), "--task-id", task_id, "--format", "json"])
+    assert mailbox_cli.cmd_launch_tui(args) == 0
+    assert attach_calls == [(tmp_path / "wezterm.exe", workspace, tmp_path)]
 
 
 def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
