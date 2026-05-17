@@ -178,10 +178,6 @@ def _load_scenarios() -> list[dict[str, Any]]:
     return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(SCENARIO_DIR.glob("*.json"))]
 
 
-def _is_v1_only(scenario: dict[str, Any]) -> bool:
-    return bool(scenario.get("deprecated_in_v2")) or scenario.get("relay_version") == "v1-only"
-
-
 def _current_turn(root: Path, task_id: str) -> str | None:
     conn = connect_db(root)
     try:
@@ -203,13 +199,13 @@ def _last_message_from(root: Path, task_id: str, agent: str) -> int:
         conn.close()
 
 
-def _send_extra_triggers(root: Path, task_id: str, count: int) -> str | None:
+def _send_extra_doorbells(root: Path, task_id: str, count: int) -> str | None:
     for _ in range(max(0, count)):
         turn = _current_turn(root, task_id)
         if not turn:
-            return "extra trigger skipped: no current turn"
+            return "extra doorbell skipped: no current turn"
         rv = _run_mailbox(
-            "trigger",
+            "doorbell",
             "--root",
             str(root),
             "--task-id",
@@ -220,7 +216,7 @@ def _send_extra_triggers(root: Path, task_id: str, count: int) -> str | None:
             "json",
         )
         if rv.returncode != 0:
-            return f"extra trigger failed for {turn}: {rv.stderr or rv.stdout}"
+            return f"extra doorbell failed for {turn}: {rv.stderr or rv.stdout}"
     return None
 
 
@@ -254,7 +250,7 @@ def _poll_to_terminal(
     deadline = time.time() + timeout_s
     observed_blocked = False
     injected = False
-    extra_triggers_sent = False
+    extra_doorbells_sent = False
     actions_done: set[str] = set()
     first_claude_seen = _last_message_from(root, task_id, "claude")
     first_codex_seen = _last_message_from(root, task_id, "codex")
@@ -285,10 +281,11 @@ def _poll_to_terminal(
                     )
                     if rv.returncode != 0:
                         return "error", observed_blocked
-            if not extra_triggers_sent and int(scenario.get("extra_triggers", 0)) > 0:
+            extra_count = int(scenario.get("extra_doorbells", 0) or 0)
+            if not extra_doorbells_sent and extra_count > 0:
                 if _last_message_from(root, task_id, "claude") > first_claude_seen or _last_message_from(root, task_id, "codex") > first_codex_seen:
-                    extra_triggers_sent = True
-                    if _send_extra_triggers(root, task_id, int(scenario["extra_triggers"])) is not None:
+                    extra_doorbells_sent = True
+                    if _send_extra_doorbells(root, task_id, extra_count) is not None:
                         return "error", observed_blocked
             if ACTION_REDISCOVER_CODEX in scenario.get("actions", []) and ACTION_REDISCOVER_CODEX not in actions_done:
                 if _last_message_from(root, task_id, "codex") > first_codex_seen:
@@ -329,13 +326,7 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         raise RuntimeError(_command_error(rv))
     task_id = json.loads(rv.stdout)["data"]["task_id"]
 
-    eval_env = {
-        "AGENT_MAILBOX_CLAUDE_PERMISSION_MODE": os.environ.get(
-            "AGENT_MAILBOX_CLAUDE_PERMISSION_MODE",
-            "auto",
-        ),
-        "AGENT_MAILBOX_RELAY_VERSION": "2",
-    }
+    eval_env = {"AGENT_MAILBOX_CLAUDE_PERMISSION_MODE": os.environ.get("AGENT_MAILBOX_CLAUDE_PERMISSION_MODE", "auto")}
     launch_rv = _run_mailbox(
         "launch-tui",
         "--root",
@@ -363,16 +354,12 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
     # scenario timeout plus margin; otherwise real agents can be mid-turn when
     # the relay exits and the room will stall in "waiting".
     relay_max_iters = max(60, int(scenario.get("timeout_seconds", 420)) // 2 + 60)
-    relay_cmd = [
-        "cmd",
-        "/c",
-        str(SKILL_ROOT / "scripts" / "launch_relay_pane.cmd"),
-        task_id,
-        str(mailbox_root),
-        str(project),
-        str(MAILBOX),
-        str(relay_max_iters),
-    ]
+    relay_cmd = _build_v2_relay_cmd(
+        task_id=task_id,
+        mailbox_root=mailbox_root,
+        project=project,
+        relay_max_iters=relay_max_iters,
+    )
     relay_rv = subprocess.run(
         build_split_argv(
             wezterm_exe=wezterm_exe,
@@ -408,6 +395,19 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         )
     launch["relay_pane_id"] = relay_pane_id
     return task_id, launch, wezterm_exe
+
+
+def _build_v2_relay_cmd(*, task_id: str, mailbox_root: Path, project: Path, relay_max_iters: int) -> list[str]:
+    return [
+        "cmd",
+        "/c",
+        str(SKILL_ROOT / "scripts" / "launch_relay_pane.cmd"),
+        task_id,
+        str(mailbox_root),
+        str(project),
+        str(MAILBOX),
+        str(relay_max_iters),
+    ]
 
 
 def _stop_real_task(mailbox_root: Path, task_id: str) -> None:
@@ -454,7 +454,6 @@ def _write_outbox(path: Path, *, from_agent: str, to_agent: str, status: str, su
 
 
 def _run_synthetic_action(mailbox_root: Path, task_id: str, scenario: dict[str, Any], synthetic: str) -> tuple[str, list[str]]:
-    env = {"AGENT_MAILBOX_RELAY_VERSION": "2"}
     conn = connect_db(mailbox_root)
     try:
         room = conn.execute("SELECT * FROM rooms WHERE id=?", (task_id,)).fetchone()
@@ -550,8 +549,8 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
     task_id: str | None = None
     result: ScenarioResult | None = None
     try:
-        if _is_v1_only(scenario) and not launch_real:
-            result = ScenarioResult(scenario["id"], scenario["name"], "skipped", ["v1-only scenario; deprecated in v2"], str(work_root), None)
+        if scenario.get("relay_version") != "v2-outbox":
+            result = ScenarioResult(scenario["id"], scenario["name"], "fail", [f"unsupported relay_version: {scenario.get('relay_version')}"], str(work_root), None)
             return result
         start_args = [
             "init",

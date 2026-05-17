@@ -61,9 +61,9 @@ CREATE TABLE IF NOT EXISTS panes (
 );
 CREATE TABLE IF NOT EXISTS tui_relay_state (
     room_id TEXT PRIMARY KEY REFERENCES rooms(id),
-    last_triggered_agent TEXT,
-    last_triggered_turn TEXT,
-    last_triggered_message_id INTEGER NOT NULL DEFAULT 0,
+    last_doorbell_agent TEXT,
+    last_doorbell_turn TEXT,
+    last_doorbell_message_id INTEGER NOT NULL DEFAULT 0,
     paused INTEGER NOT NULL DEFAULT 0,
     pause_reason TEXT,
     watcher_pid INTEGER,

@@ -15,6 +15,25 @@ def _run(*args, env=None):
     return subprocess.run([sys.executable, str(MAILBOX), *args], capture_output=True, text=True, env=env)
 
 
+def _seed_message(root: Path, task_id: str, *, from_agent: str, to_agent: str, status: str = "continue", summary: str = "hello", body: str = "body"):
+    conn = connect_db(root)
+    try:
+        return send_message(
+            conn,
+            root=root,
+            room_id=task_id,
+            from_agent=from_agent,
+            to_agent=to_agent,
+            kind="message",
+            status=status,
+            summary=summary,
+            body=body,
+            next_turn=to_agent if status == "continue" else None,
+        )
+    finally:
+        conn.close()
+
+
 def test_init_creates_room_with_sessions(tmp_path):
     root = tmp_path / "mb"
     rv = _run(
@@ -74,30 +93,11 @@ def test_init_context_file_creates_bootstrap_context_message(tmp_path):
     assert "inspect README first" in msg["body_text"]
 
 
-def test_post_show_ack_export_and_status(tmp_path):
+def test_show_ack_export_and_status(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
     task_id = json.loads(init.stdout)["data"]["task_id"]
-    post = _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "claude",
-        "--to",
-        "codex",
-        "--status",
-        "continue",
-        "--summary",
-        "hello",
-        "--body",
-        "body",
-        "--format",
-        "json",
-    )
-    assert post.returncode == 0, post.stderr
+    _seed_message(root, task_id, from_agent="claude", to_agent="codex", status="continue", summary="hello", body="body")
     show = _run("show", "--root", str(root), "--task-id", task_id, "--body", "--format", "json")
     assert json.loads(show.stdout)["data"]["messages"][0]["body"] == "body"
     status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
@@ -106,39 +106,17 @@ def test_post_show_ack_export_and_status(tmp_path):
     assert Path(json.loads(export.stdout)["data"]["path"]).exists()
 
 
-def test_post_warns_when_non_terminal_protocol_header_missing(tmp_path):
-    root = tmp_path / "mb"
-    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
-    task_id = json.loads(init.stdout)["data"]["task_id"]
-    post = _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "claude",
-        "--to",
-        "codex",
-        "--status",
-        "continue",
-        "--summary",
-        "agree",
-        "--body",
-        "I agree we should run it.",
-        "--format",
-        "json",
-    )
-    assert post.returncode == 0, post.stderr
-    warnings = json.loads(post.stdout)["data"]["warnings"]
+def test_protocol_lint_warns_when_non_terminal_header_missing():
+    import mailbox as mailbox_cli
+
+    warnings = mailbox_cli.lint_protocol_header(status="continue", body="I agree we should run it.", participants={"claude", "codex"})
     assert "missing protocol header: Mode" in warnings
     assert "non-terminal posts must name a concrete Next action or Blocked on" in warnings
 
 
-def test_post_accepts_role_mode_protocol_header(tmp_path):
-    root = tmp_path / "mb"
-    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
-    task_id = json.loads(init.stdout)["data"]["task_id"]
+def test_protocol_lint_accepts_role_mode_protocol_header():
+    import mailbox as mailbox_cli
+
     body = "\n".join(
         [
             "Mode: EXECUTE",
@@ -151,33 +129,12 @@ def test_post_accepts_role_mode_protocol_header(tmp_path):
             "I will run it now.",
         ]
     )
-    post = _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "claude",
-        "--to",
-        "codex",
-        "--status",
-        "continue",
-        "--summary",
-        "execute",
-        "--body",
-        body,
-        "--format",
-        "json",
-    )
-    assert post.returncode == 0, post.stderr
-    assert json.loads(post.stdout)["data"]["warnings"] == []
+    assert mailbox_cli.lint_protocol_header(status="continue", body=body, participants={"claude", "codex"}) == []
 
 
-def test_post_warns_owner_not_participant(tmp_path):
-    root = tmp_path / "mb"
-    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
-    task_id = json.loads(init.stdout)["data"]["task_id"]
+def test_protocol_lint_warns_owner_not_participant():
+    import mailbox as mailbox_cli
+
     body = "\n".join(
         [
             "Mode: EXECUTE",
@@ -188,33 +145,12 @@ def test_post_warns_owner_not_participant(tmp_path):
             "Done when: tests pass",
         ]
     )
-    post = _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "claude",
-        "--to",
-        "codex",
-        "--status",
-        "continue",
-        "--summary",
-        "bad owner",
-        "--body",
-        body,
-        "--format",
-        "json",
-    )
-    assert post.returncode == 0, post.stderr
-    assert "protocol Owner is not a participant: buildbot" in json.loads(post.stdout)["data"]["warnings"]
+    assert "protocol Owner is not a participant: buildbot" in mailbox_cli.lint_protocol_header(status="continue", body=body, participants={"claude", "codex"})
 
 
-def test_post_accepts_lowercase_protocol_mode(tmp_path):
-    root = tmp_path / "mb"
-    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
-    task_id = json.loads(init.stdout)["data"]["task_id"]
+def test_protocol_lint_accepts_lowercase_protocol_mode():
+    import mailbox as mailbox_cli
+
     body = "\n".join(
         [
             "Mode: discuss",
@@ -225,30 +161,10 @@ def test_post_accepts_lowercase_protocol_mode(tmp_path):
             "Done when: a decision is posted",
         ]
     )
-    post = _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "claude",
-        "--to",
-        "codex",
-        "--status",
-        "continue",
-        "--summary",
-        "discuss",
-        "--body",
-        body,
-        "--format",
-        "json",
-    )
-    assert post.returncode == 0, post.stderr
-    assert json.loads(post.stdout)["data"]["warnings"] == []
+    assert mailbox_cli.lint_protocol_header(status="continue", body=body, participants={"claude", "codex"}) == []
 
 
-def test_post_accepts_v11_synonym_protocol_mode(tmp_path):
+def test_send_message_accepts_coordinate_protocol_mode(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
     task_id = json.loads(init.stdout)["data"]["task_id"]
@@ -262,76 +178,17 @@ def test_post_accepts_v11_synonym_protocol_mode(tmp_path):
             "Done when: results are posted",
         ]
     )
-    post = _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "claude",
-        "--to",
-        "codex",
-        "--status",
-        "continue",
-        "--summary",
-        "coordinate",
-        "--body",
-        body,
-        "--format",
-        "json",
-    )
-    assert post.returncode == 0, post.stderr
-    assert json.loads(post.stdout)["data"]["warnings"] == []
+    import mailbox as mailbox_cli
+
+    assert mailbox_cli.lint_protocol_header(status="continue", body=body, participants={"claude", "codex"}) == []
+    _seed_message(root, task_id, from_agent="claude", to_agent="codex", status="continue", summary="coordinate", body=body)
     status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
     assert json.loads(status.stdout)["data"]["turn"] == "codex"
 
 
-def test_post_routes_execute_owner_to_owner_not_reviewer(tmp_path):
-    root = tmp_path / "mb"
-    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
-    task_id = json.loads(init.stdout)["data"]["task_id"]
-    body = "\n".join(
-        [
-            "Mode: EXECUTE",
-            "Coordinator: claude",
-            "Owner: codex",
-            "Reviewer: claude",
-            "Next action: Codex implements the feature.",
-            "Done when: Tests pass.",
-            "",
-            "Acknowledged. I will proceed and return with results.",
-        ]
-    )
-    post = _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "codex",
-        "--to",
-        "claude",
-        "--status",
-        "continue",
-        "--summary",
-        "ack",
-        "--body",
-        body,
-        "--format",
-        "json",
-    )
-    assert post.returncode == 0, post.stderr
-    assert json.loads(post.stdout)["data"]["warnings"] == []
-    status = _run("status", "--root", str(root), "--task-id", task_id, "--format", "json")
-    assert json.loads(status.stdout)["data"]["turn"] == "codex"
+def test_protocol_lint_rejects_arbitrary_protocol_mode():
+    import mailbox as mailbox_cli
 
-
-def test_post_rejects_arbitrary_protocol_mode(tmp_path):
-    root = tmp_path / "mb"
-    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
-    task_id = json.loads(init.stdout)["data"]["task_id"]
     body = "\n".join(
         [
             "Mode: lol",
@@ -342,33 +199,12 @@ def test_post_rejects_arbitrary_protocol_mode(tmp_path):
             "Done when: done",
         ]
     )
-    post = _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "claude",
-        "--to",
-        "codex",
-        "--status",
-        "continue",
-        "--summary",
-        "bad mode",
-        "--body",
-        body,
-        "--format",
-        "json",
-    )
-    assert post.returncode == 0, post.stderr
-    assert "unknown protocol Mode: lol" in json.loads(post.stdout)["data"]["warnings"]
+    assert "unknown protocol Mode: lol" in mailbox_cli.lint_protocol_header(status="continue", body=body, participants={"claude", "codex"})
 
 
-def test_post_rejects_empty_protocol_mode(tmp_path):
-    root = tmp_path / "mb"
-    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
-    task_id = json.loads(init.stdout)["data"]["task_id"]
+def test_protocol_lint_rejects_empty_protocol_mode():
+    import mailbox as mailbox_cli
+
     body = "\n".join(
         [
             "Mode: ",
@@ -379,27 +215,14 @@ def test_post_rejects_empty_protocol_mode(tmp_path):
             "Done when: done",
         ]
     )
-    post = _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "claude",
-        "--to",
-        "codex",
-        "--status",
-        "continue",
-        "--summary",
-        "empty mode",
-        "--body",
-        body,
-        "--format",
-        "json",
-    )
-    assert post.returncode == 0, post.stderr
-    assert "missing protocol header: Mode" in json.loads(post.stdout)["data"]["warnings"]
+    assert "missing protocol header: Mode" in mailbox_cli.lint_protocol_header(status="continue", body=body, participants={"claude", "codex"})
+
+
+def test_parser_has_no_public_post_command():
+    import mailbox as mailbox_cli
+
+    choices = mailbox_cli.build_parser()._subparsers._group_actions[0].choices
+    assert "post" not in choices
 
 
 def test_launch_tui_fake_panes(monkeypatch, tmp_path):
@@ -793,23 +616,7 @@ def test_watch_chat_emits_existing_messages_without_mutating_state(tmp_path):
         "json",
     )
     task_id = json.loads(init.stdout)["data"]["task_id"]
-    assert _run(
-        "post",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-        "--from",
-        "claude",
-        "--to",
-        "codex",
-        "--status",
-        "continue",
-        "--summary",
-        "hello",
-        "--body",
-        "body",
-    ).returncode == 0
+    _seed_message(root, task_id, from_agent="claude", to_agent="codex", status="continue", summary="hello", body="body")
     conn = connect_db(root)
     before_room = dict(conn.execute("SELECT status, turn, last_message_id, round FROM rooms WHERE id=?", (task_id,)).fetchone())
     before_messages = conn.execute("SELECT COUNT(*) AS n FROM messages WHERE room_id=?", (task_id,)).fetchone()["n"]
@@ -833,8 +640,8 @@ def test_watch_chat_from_message_id_emits_only_newer_messages(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
     task_id = json.loads(init.stdout)["data"]["task_id"]
-    _run("post", "--root", str(root), "--task-id", task_id, "--from", "claude", "--to", "codex", "--status", "continue", "--summary", "old", "--body", "old body")
-    _run("post", "--root", str(root), "--task-id", task_id, "--from", "codex", "--to", "claude", "--status", "continue", "--summary", "new", "--body", "new body")
+    _seed_message(root, task_id, from_agent="claude", to_agent="codex", status="continue", summary="old", body="old body")
+    _seed_message(root, task_id, from_agent="codex", to_agent="claude", status="continue", summary="new", body="new body")
     rv = _run("watch-chat", "--root", str(root), "--task-id", task_id, "--from-message-id", "1", "--max-iters", "1", "--no-color")
     assert rv.returncode == 0, rv.stderr
     assert "read-only transcript view" in rv.stdout
@@ -843,7 +650,7 @@ def test_watch_chat_from_message_id_emits_only_newer_messages(tmp_path):
     assert "new body" in rv.stdout
 
 
-def test_dry_run_prints_current_turn_trigger_without_mutating(tmp_path):
+def test_dry_run_prints_current_turn_doorbell_without_mutating(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
     task_id = json.loads(init.stdout)["data"]["task_id"]
@@ -855,7 +662,8 @@ def test_dry_run_prints_current_turn_trigger_without_mutating(tmp_path):
     data = json.loads(rv.stdout)["data"]
     assert data["agent"] == "claude"
     assert data["peer"] == "codex"
-    assert f"agent-mailbox task {task_id}" in data["trigger_text"]
+    assert f"agent-mailbox task {task_id}" in data["doorbell_text"]
+    assert "Write your reply to:" in data["doorbell_text"]
     conn = connect_db(root)
     after = dict(conn.execute("SELECT turn, round, last_message_id FROM rooms WHERE id=?", (task_id,)).fetchone())
     conn.close()
@@ -1032,7 +840,7 @@ def test_watch_chat_terminal_room_exits_after_grace(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
     task_id = json.loads(init.stdout)["data"]["task_id"]
-    _run("post", "--root", str(root), "--task-id", task_id, "--from", "claude", "--to", "codex", "--status", "final", "--summary", "done", "--body", "done")
+    _seed_message(root, task_id, from_agent="claude", to_agent="codex", status="final", summary="done", body="done")
     rv = _run(
         "watch-chat",
         "--root",

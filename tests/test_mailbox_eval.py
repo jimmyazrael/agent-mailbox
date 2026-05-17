@@ -22,11 +22,8 @@ def test_eval_scenarios_are_hard_and_structured():
         assert data["goal"]
         assert data["context"]
         assert data["workspace_files"]
-        if data.get("deprecated_in_v2"):
-            assert data["relay_version"] == "v1-only"
-        else:
-            assert data["relay_version"] == "v2-outbox"
-            assert data["success"]["terminal_status"] in {"final", "paused"}
+        assert data["relay_version"] == "v2-outbox"
+        assert data["success"]["terminal_status"] in {"final", "paused"}
         categories.add(data["category"])
     assert {"context-bootstrap", "blocked-resume", "idempotency", "recovery", "context-overload", "role-mode-protocol", "outbox-integrity", "outbox-safety-net"}.issubset(categories)
 
@@ -52,18 +49,6 @@ def test_mailbox_eval_initializes_scenario_without_real_agents():
     assert result["scenario_id"] == "AM-01"
     assert result["status"] == "defined"
     assert result["task_id"]
-
-
-def test_mailbox_eval_skips_v1_only_scenario_without_real_agents():
-    rv = subprocess.run(
-        [sys.executable, str(MAILBOX_EVAL), "--scenario", "AM-08"],
-        capture_output=True,
-        text=True,
-    )
-    assert rv.returncode == 0, rv.stderr
-    result = json.loads(rv.stdout)
-    assert result["scenario_id"] == "AM-08"
-    assert result["status"] == "skipped"
 
 
 def test_mailbox_eval_runs_synthetic_outbox_integrity_scenario():
@@ -105,7 +90,7 @@ def test_run_mailbox_accepts_env_overrides(monkeypatch):
     assert seen["AGENT_MAILBOX_CLAUDE_PERMISSION_MODE"] == "bypassPermissions"
 
 
-def test_mailbox_eval_extra_trigger_targets_current_turn(monkeypatch, tmp_path):
+def test_mailbox_eval_extra_doorbell_targets_current_turn(monkeypatch, tmp_path):
     root = tmp_path / "mb"
     init_db(root)
     conn = connect_db(root)
@@ -123,10 +108,10 @@ def test_mailbox_eval_extra_trigger_targets_current_turn(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(args, 0, '{"ok": true}', "")
 
     monkeypatch.setattr(mailbox_eval, "_run_mailbox", fake_run_mailbox)
-    assert mailbox_eval._send_extra_triggers(root, "t1", 2) is None
+    assert mailbox_eval._send_extra_doorbells(root, "t1", 2) is None
     assert calls == [
-        ("trigger", "--root", str(root), "--task-id", "t1", "--agent", "codex", "--format", "json"),
-        ("trigger", "--root", str(root), "--task-id", "t1", "--agent", "codex", "--format", "json"),
+        ("doorbell", "--root", str(root), "--task-id", "t1", "--agent", "codex", "--format", "json"),
+        ("doorbell", "--root", str(root), "--task-id", "t1", "--agent", "codex", "--format", "json"),
     ]
 
 
@@ -144,7 +129,7 @@ def test_mailbox_eval_rediscover_action_calls_repair(monkeypatch, tmp_path):
     ]
 
 
-def test_mailbox_eval_terminal_room_skips_extra_trigger(monkeypatch, tmp_path):
+def test_mailbox_eval_terminal_room_skips_extra_doorbell(monkeypatch, tmp_path):
     root = tmp_path / "mb"
     init_db(root)
     conn = connect_db(root)
@@ -155,7 +140,7 @@ def test_mailbox_eval_terminal_room_skips_extra_trigger(monkeypatch, tmp_path):
     conn.close()
     calls = []
     monkeypatch.setattr(mailbox_eval, "_run_mailbox", lambda *args, **kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0, "{}", ""))
-    terminal, _ = mailbox_eval._poll_to_terminal(root, "t1", 1, {"extra_triggers": 1})
+    terminal, _ = mailbox_eval._poll_to_terminal(root, "t1", 1, {"extra_doorbells": 1})
     assert terminal == "final"
     assert calls == []
 
@@ -175,12 +160,13 @@ def test_mailbox_eval_failed_real_run_stops_task(monkeypatch, tmp_path):
     monkeypatch.setattr(mailbox_eval, "_capture_pane_snapshots", lambda *args, **kwargs: None)
     monkeypatch.setattr(mailbox_eval, "_run_mailbox", fake_run_mailbox)
     result = mailbox_eval.run_scenario(
-        {
-            "id": "AM-X",
-            "name": "x",
-            "goal": "g",
-            "context": "c",
-            "workspace_files": {"a.txt": "a"},
+            {
+                "id": "AM-X",
+                "name": "x",
+                "relay_version": "v2-outbox",
+                "goal": "g",
+                "context": "c",
+                "workspace_files": {"a.txt": "a"},
             "success": {"terminal_status": "final"},
         },
         keep=True,

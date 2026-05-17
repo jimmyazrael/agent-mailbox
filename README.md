@@ -10,7 +10,7 @@ By default, `mailbox.py start` opens a WezTerm workspace with:
 
 - Claude Code pane
 - Codex pane
-- relay pane that triggers the active agent
+- relay pane that sends one-shot doorbells to the active agent
 - read-only chat transcript pane
 - control panel tab for pause/resume/inject/stop/repair actions
 
@@ -191,12 +191,7 @@ Add `--close-panes --yes` only when you also want the WezTerm panes closed. The 
 
 ## Validation
 
-Tagged releases:
-
-- `v1.0`: initial validated two-agent workflow, AM-01 through AM-06
-- `v1.1`: default-on chat transcript, AM-07 duplicate-handoff scenario, protocol vocabulary expansion
-
-Current scenario coverage includes hard real Claude/Codex/WezTerm cases for context bootstrap, blocked-state injection, duplicate triggers, Codex rediscovery, context overload, passive consensus, and mid-handoff duplicate-trigger resilience.
+Current scenario coverage includes hard real Claude/Codex/WezTerm cases for context bootstrap, blocked-state injection, duplicate doorbells, Codex rediscovery, context overload, passive consensus, and mid-handoff duplicate-doorbell resilience.
 
 Important work is gated on a real GUI startup smoke. Unit tests and dry-run scenarios are not enough: the smoke must prove that a visible WezTerm workspace exists, Claude and Codex panes are live agent TUIs rather than shells/prompts/auth errors, the relay starts only after readiness, and failed runs clean up panes.
 

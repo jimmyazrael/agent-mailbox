@@ -47,3 +47,10 @@ def test_skill_md_has_must_not_list():
     assert "MUST NOT" in text
     assert "agent-chat.sqlite" in text
     assert "codex resume --last" in text
+
+
+def test_skill_md_documents_outbox_not_cli_post():
+    text = SKILL_MD.read_text(encoding="utf-8")
+    assert "assigned outbox Markdown file" in text
+    assert "<!-- AGENT-MAILBOX:DONE -->" in text
+    assert "mailbox.py post --root" not in text

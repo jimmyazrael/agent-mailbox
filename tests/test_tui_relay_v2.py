@@ -43,7 +43,7 @@ def test_first_turn_text_points_to_bootstrap_context_and_outbox(tmp_path):
     assert str(tmp_path / "t1" / "outbox" / "claude" / "000001.md") in text
 
 
-def test_run_once_imports_outbox_then_triggers_next_turn(monkeypatch, tmp_path):
+def test_run_once_imports_outbox_then_sends_doorbell_to_next_turn(monkeypatch, tmp_path):
     conn = _seed(tmp_path)
     path = tmp_path / "t1" / "outbox" / "codex" / "000001.md"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -52,7 +52,7 @@ def test_run_once_imports_outbox_then_triggers_next_turn(monkeypatch, tmp_path):
     monkeypatch.setattr("tui_relay_v2.send_doorbell", lambda **kwargs: calls.append(kwargs) or True)
     monkeypatch.setattr("tui_relay_v2._pane_alive", lambda *args, **kwargs: True)
 
-    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "doorbell_sent"
 
     msg = conn.execute("SELECT * FROM messages WHERE room_id='t1'").fetchone()
     assert msg["kind"] == "outbox"
@@ -63,12 +63,12 @@ def test_run_once_imports_outbox_then_triggers_next_turn(monkeypatch, tmp_path):
     assert "outbox\\claude\\000001.md" in calls[0]["text"] or "outbox/claude/000001.md" in calls[0]["text"]
 
 
-def test_run_once_triggers_first_turn_only_once(monkeypatch, tmp_path):
+def test_run_once_sends_doorbell_to_first_turn_only_once(monkeypatch, tmp_path):
     _seed(tmp_path)
     calls = []
     monkeypatch.setattr("tui_relay_v2.send_doorbell", lambda **kwargs: calls.append(kwargs) or True)
     monkeypatch.setattr("tui_relay_v2._pane_alive", lambda *args, **kwargs: True)
-    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "doorbell_sent"
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "idle"
     assert len(calls) == 1
 
@@ -103,7 +103,7 @@ def test_run_once_respects_db_only_user_inject(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr("tui_relay_v2.send_doorbell", lambda **kwargs: calls.append(kwargs) or True)
     monkeypatch.setattr("tui_relay_v2._pane_alive", lambda *args, **kwargs: True)
-    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "doorbell_sent"
     assert len(calls) == 1
     assert not (tmp_path / "t1" / "outbox" / "user").exists()
 
@@ -121,7 +121,7 @@ def test_run_once_pauses_when_completed_session_has_no_outbox(monkeypatch, tmp_p
         lambda path, agent: {"path": str(path), "timestamp": "t", "text": "done", "hash": "h1", "mtime": 1},
     )
 
-    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "doorbell_sent"
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "missing_outbox_after_turn"
     relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id='t1'").fetchone()
     assert relay["paused"] == 1
@@ -143,7 +143,7 @@ def test_run_once_marks_session_completion_handled_after_outbox(monkeypatch, tmp
         lambda path, agent: {"path": str(path), "timestamp": "t", "text": "done", "hash": "handled", "mtime": 1},
     )
 
-    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "doorbell_sent"
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "idle"
     relay = conn.execute("SELECT paused FROM tui_relay_state WHERE room_id='t1'").fetchone()
     assert relay["paused"] == 0

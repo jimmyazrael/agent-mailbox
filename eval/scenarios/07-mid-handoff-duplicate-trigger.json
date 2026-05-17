@@ -1,20 +1,20 @@
 {
   "id": "AM-07",
-  "name": "Mid-handoff duplicate trigger resilience",
+  "name": "Mid-handoff duplicate doorbell resilience",
   "category": "idempotency",
   "difficulty": "hard",
   "relay_version": "v2-outbox",
-  "goal": "A mid-handoff duplicate trigger must not cause duplicate outbox files or duplicate imported messages for the same latest state.",
+  "goal": "A mid-handoff duplicate doorbell must not cause duplicate outbox files or duplicate imported messages for the same latest state.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
-    "README.md": "# Mid-Handoff Duplicate Trigger\n\nThis scenario forces a non-terminal handoff before final. Duplicate triggers may fire while the next agent is active.\n"
+    "README.md": "# Mid-Handoff Duplicate Doorbell\n\nThis scenario forces a non-terminal handoff before final. Duplicate doorbells may fire while the next agent is active.\n"
   },
-  "context": "You are testing duplicate-trigger resilience under v2. A duplicate doorbell may fire for the same latest state while a peer turn is active. Respond to each requested turn exactly once by writing one completed outbox file. Required flow: Claude first asks Codex to confirm duplicate-trigger handling; Codex writes exactly one confirmation; Claude then writes final. The final answer should mention mid-handoff duplicate trigger resilience.",
-  "extra_triggers": 1,
+  "context": "You are testing duplicate-doorbell resilience under v2. A duplicate doorbell may fire for the same latest state while a peer turn is active. Respond to each requested turn exactly once by writing one completed outbox file. Required flow: Claude first asks Codex to confirm duplicate-doorbell handling; Codex writes exactly one confirmation; Claude then writes final. The final answer should mention mid-handoff duplicate doorbell resilience.",
+  "extra_doorbells": 1,
   "success": {
     "required_transcript_terms": [
-      "mid-handoff duplicate trigger"
+      "mid-handoff duplicate doorbell"
     ],
     "max_messages": 4,
     "terminal_status": "final"

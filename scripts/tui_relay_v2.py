@@ -202,7 +202,7 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
         if not turn:
             return "no_turn"
         last_message_id = int(room["last_message_id"])
-        if state and state["last_triggered_turn"] == turn and int(state["last_triggered_message_id"]) == last_message_id:
+        if state and state["last_doorbell_turn"] == turn and int(state["last_doorbell_message_id"]) == last_message_id:
             reason = _check_missing_outbox_after_completion(conn, root=root, task_id=task_id, agent=turn, now=time.monotonic())
             if reason:
                 _pause_relay(conn, task_id, reason)
@@ -230,12 +230,12 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             return "send_failed"
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
-            "UPDATE tui_relay_state SET last_triggered_agent=?, last_triggered_turn=?, "
-            "last_triggered_message_id=? WHERE room_id=?",
+            "UPDATE tui_relay_state SET last_doorbell_agent=?, last_doorbell_turn=?, "
+            "last_doorbell_message_id=? WHERE room_id=?",
             (turn, turn, last_message_id, task_id),
         )
         conn.execute("COMMIT")
-        return "triggered"
+        return "doorbell_sent"
     finally:
         conn.close()
 

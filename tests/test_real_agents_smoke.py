@@ -146,7 +146,7 @@ def test_real_agents_one_round_smoke(tmp_path):
     assert startup["agents"]["codex"]["state"] in {"ready", "trust_prompt"}
 
     # Real TUIs may stop at workspace-trust prompts for pytest temp dirs. Pick
-    # option 1 in both panes before starting the relay so the first trigger lands.
+        # option 1 in both panes before starting the relay so the first doorbell lands.
     for pane_key in ("claude_pane_id", "codex_pane_id"):
         _accept_trust_prompt(wez, int(launch[pane_key]))
 

@@ -95,7 +95,7 @@ Use `--context-file` or `--context` for serious tasks. The context should state 
 
 ## Inside Agent Panes
 
-When triggered, the pane agent should:
+When the doorbell arrives in a pane, the pane agent should:
 
 1. Read the latest mailbox state:
 
@@ -105,13 +105,29 @@ python <skill>\scripts\mailbox.py show --root <root> --task-id <id> --tail 1 --b
 
 2. Decide whether a response is needed. If the previous response already covers the latest message, do not post again.
 
-3. Post via the CLI, never by editing `agent-chat.sqlite` directly:
+3. Reply by writing the assigned outbox Markdown file. Do not call `mailbox.py post` for normal agent-to-agent turns.
 
-```powershell
-python <skill>\scripts\mailbox.py post --root <root> --task-id <id> --from codex --to claude --status continue --summary "review notes" --body-file F:\tmp\reply.md
+```markdown
+---
+from: codex
+to: claude
+status: continue
+summary: review notes
+---
+
+Mode: REVIEW
+Coordinator: codex
+Owner: claude
+Reviewer: codex
+Next action: inspect the findings and decide whether to patch
+Done when: Claude either accepts the patch or identifies a concrete issue
+
+Review body...
+
+<!-- AGENT-MAILBOX:DONE -->
 ```
 
-Valid statuses are `continue`, `blocked`, `final`, and `error`. For `blocked`, also pass `--blocked-reason`.
+Valid statuses are `continue`, `blocked`, `final`, and `error`. For `blocked`, include `Blocked on:` in the body. The relay imports completed outbox files and mirrors them to SQLite.
 
 ## Role And Mode Protocol
 
@@ -151,7 +167,7 @@ Default coordinator is the agent that initialized the task or made the latest ma
 
 Rule: a non-terminal message must not end with agreement only. It must either name a concrete `Next action` with an owner and done condition, or declare `Blocked on`.
 
-`mailbox.py post` emits non-blocking warnings when non-terminal posts omit the protocol header. Warnings are advisory for compatibility, but new skill usage should treat them as issues to fix.
+The outbox importer rejects malformed files. Treat a malformed-outbox pause as a real protocol failure and fix the outbox file rather than bypassing the importer.
 
 ## Observability And Control
 
@@ -202,13 +218,13 @@ For detailed user-facing commands, see `README.md` "Accident Playbook".
 
 ## MUST NOT
 
-Agents inside panes must not write directly to `agent-chat.sqlite` or artifact files. Use `mailbox post`.
+Agents inside panes must not write directly to `agent-chat.sqlite` or artifact files. Use the assigned outbox Markdown file.
 
 Agents must not modify other tasks' rooms or messages.
 
 Agents must not call `codex resume --last` automatically.
 
-Agents must not bypass `tui_relay_state.paused` by manually triggering peers.
+Agents must not bypass `tui_relay_state.paused` by manually sending doorbells to peers.
 
 Markdown transcripts are export-only. Do not parse `transcript.md` back as state.
 
@@ -229,4 +245,4 @@ $env:AGENT_MAILBOX_RUN_REAL_SMOKE = "1"
 pytest <skill>\tests\test_real_agents_smoke.py -q -m real_agents
 ```
 
-Scenario definitions live under `eval/scenarios`. They should be adversarial and designed to expose failures: context loss, approval friction, blocked-state handling, duplicate triggers, rediscovery, and context overload.
+Scenario definitions live under `eval/scenarios`. They should be adversarial and designed to expose failures: context loss, approval friction, blocked-state handling, duplicate doorbells, rediscovery, and context overload.

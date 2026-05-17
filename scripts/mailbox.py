@@ -536,10 +536,7 @@ def cmd_tui_relay(args) -> int:
     finally:
         conn.close()
     from tui_launcher import find_wezterm
-    if os.environ.get("AGENT_MAILBOX_RELAY_VERSION") == "2":
-        from tui_relay_v2 import run_watcher_loop
-    else:
-        from tui_relay import run_watcher_loop
+    from tui_relay_v2 import run_watcher_loop
 
     result = run_watcher_loop(
         root=root,
@@ -551,26 +548,34 @@ def cmd_tui_relay(args) -> int:
     return _emit(args, ok=True, data={"task_id": task_id, "exit_reason": result})
 
 
-def cmd_trigger(args) -> int:
+def cmd_doorbell(args) -> int:
     root = _root(args)
     conn = connect_db(root)
     try:
         task_id = _resolve(conn, args.task_id)
+        room = conn.execute("SELECT * FROM rooms WHERE id=?", (task_id,)).fetchone()
+        if room is None:
+            return _emit(args, ok=False, error=f"room not found: {task_id}")
+        agent = args.agent or room["turn"]
+        if not agent:
+            return _emit(args, ok=False, error="room has no current turn")
         pane = conn.execute(
             "SELECT pane_id FROM panes WHERE room_id=? AND pane_role=?",
-            (task_id, args.agent),
+            (task_id, agent),
         ).fetchone()
         if pane is None or pane["pane_id"] is None:
-            return _emit(args, ok=False, error=f"no pane bound for {args.agent}")
+            return _emit(args, ok=False, error=f"no pane bound for {agent}")
         participants = [row["agent"] for row in conn.execute("SELECT agent FROM participants WHERE room_id=?", (task_id,))]
-        peer = peer_for(participants, args.agent)
+        peer = peer_for(participants, agent)
+        first_turn = int(room["round"]) == 0
     finally:
         conn.close()
     from tui_launcher import find_wezterm
-    from tui_relay import send_trigger
+    from tui_relay_v2 import doorbell_text, first_turn_text, send_doorbell
 
-    ok = send_trigger(wezterm_exe=find_wezterm(), pane_id=int(pane["pane_id"]), agent=args.agent, peer=peer, task_id=task_id, root=root)
-    return _emit(args, ok=ok, data={"task_id": task_id, "agent": args.agent}, error=None if ok else "send-text failed")
+    text = first_turn_text(agent=agent, task_id=task_id, root=root) if first_turn else doorbell_text(agent=agent, peer=peer, task_id=task_id, root=root)
+    ok = send_doorbell(wezterm_exe=find_wezterm(), pane_id=int(pane["pane_id"]), text=text)
+    return _emit(args, ok=ok, data={"task_id": task_id, "agent": agent}, error=None if ok else "send-text failed")
 
 
 def cmd_inject(args) -> int:
@@ -602,37 +607,6 @@ def cmd_inject(args) -> int:
     finally:
         conn.close()
     return _emit(args, ok=True, data={"task_id": task_id, "target": target, "message_id": rv["message_id"]})
-
-
-def cmd_post(args) -> int:
-    root = _root(args)
-    conn = connect_db(root)
-    try:
-        task_id = _resolve(conn, args.task_id)
-        if args.body is not None:
-            body = args.body
-        elif args.body_file:
-            body = args.body_file.read_text(encoding="utf-8")
-        else:
-            body = sys.stdin.read()
-        participants = {str(row["agent"]).strip().lower() for row in conn.execute("SELECT agent FROM participants WHERE room_id=?", (task_id,)).fetchall()}
-        protocol_warnings = lint_protocol_header(status=args.status, body=body, participants=participants)
-        rv = send_message(
-            conn,
-            root=root,
-            room_id=task_id,
-            from_agent=args.from_agent,
-            to_agent=args.to_agent,
-            kind="message",
-            status=args.status,
-            summary=args.summary,
-            body=body,
-            blocked_reason=args.blocked_reason,
-            next_turn=args.next_turn,
-        )
-    finally:
-        conn.close()
-    return _emit(args, ok=True, data={"task_id": task_id, "message_id": rv["message_id"], "warnings": protocol_warnings})
 
 
 def cmd_show(args) -> int:
@@ -1206,12 +1180,12 @@ def cmd_dry_run(args) -> int:
             return _emit(args, ok=False, error="room has no current turn")
         participants = [row["agent"] for row in conn.execute("SELECT agent FROM participants WHERE room_id=? ORDER BY agent", (task_id,)).fetchall()]
         peer = peer_for(participants, turn)
-        from tui_relay import trigger_text
+        from tui_relay_v2 import doorbell_text, first_turn_text
 
-        text = trigger_text(agent=turn, peer=peer, task_id=task_id, root=root, first_turn=int(room["round"]) == 0)
+        text = first_turn_text(agent=turn, task_id=task_id, root=root) if int(room["round"]) == 0 else doorbell_text(agent=turn, peer=peer, task_id=task_id, root=root)
     finally:
         conn.close()
-    return _emit(args, ok=True, data={"task_id": task_id, "agent": turn, "peer": peer, "trigger_text": text})
+    return _emit(args, ok=True, data={"task_id": task_id, "agent": turn, "peer": peer, "doorbell_text": text})
 
 
 ARCHIVE_TABLES = (
@@ -1656,7 +1630,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--context-file", type=Path)
     p.set_defaults(func=cmd_start)
 
-    for name, func in [("launch-tui", cmd_launch_tui), ("tui-relay", cmd_tui_relay), ("trigger", cmd_trigger)]:
+    for name, func in [("launch-tui", cmd_launch_tui), ("tui-relay", cmd_tui_relay), ("doorbell", cmd_doorbell)]:
         p = sub.add_parser(name)
         _common(p)
         p.add_argument("--task-id", required=True)
@@ -1666,8 +1640,8 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "tui-relay":
             p.add_argument("--poll-interval-s", type=float, default=2.0)
             p.add_argument("--max-iters", type=int)
-        if name == "trigger":
-            p.add_argument("--agent", choices=["claude", "codex"], required=True)
+        if name == "doorbell":
+            p.add_argument("--agent", choices=["claude", "codex"])
         p.set_defaults(func=func)
 
     p = sub.add_parser("inject")
@@ -1677,19 +1651,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--summary")
     p.add_argument("--content")
     p.set_defaults(func=cmd_inject)
-
-    p = sub.add_parser("post")
-    _common(p)
-    p.add_argument("--task-id", required=True)
-    p.add_argument("--from", dest="from_agent", required=True)
-    p.add_argument("--to", dest="to_agent", required=True)
-    p.add_argument("--status", choices=["continue", "blocked", "final", "error"], required=True)
-    p.add_argument("--summary", required=True)
-    p.add_argument("--body")
-    p.add_argument("--body-file", type=Path)
-    p.add_argument("--blocked-reason")
-    p.add_argument("--next-turn")
-    p.set_defaults(func=cmd_post)
 
     p = sub.add_parser("show")
     _common(p)

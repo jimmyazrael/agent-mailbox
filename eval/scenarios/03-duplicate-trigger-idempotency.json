@@ -1,6 +1,6 @@
 {
   "id": "AM-03",
-  "name": "Duplicate outbox import idempotency",
+  "name": "Duplicate doorbell idempotency",
   "category": "idempotency",
   "difficulty": "hard",
   "relay_version": "v2-outbox",
@@ -8,10 +8,10 @@
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
-    "README.md": "# Idempotency Trap\n\nThe task is simple, but the relay may be asked to trigger twice.\n"
+    "README.md": "# Idempotency Trap\n\nThe task is simple, but the relay may be asked to send the doorbell twice.\n"
   },
   "context": "This is a v2 outbox idempotency test. If the same turn is already handled, do not write duplicate outbox responses. The final answer should mention idempotency and one-shot doorbells.",
-  "extra_triggers": 1,
+  "extra_doorbells": 1,
   "success": {
     "required_transcript_terms": [
       "idempotency",
