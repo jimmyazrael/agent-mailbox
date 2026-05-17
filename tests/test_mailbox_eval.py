@@ -87,3 +87,19 @@ def test_mailbox_eval_rediscover_action_calls_repair(monkeypatch, tmp_path):
     assert calls == [
         ("repair", "--root", str(tmp_path / "mb"), "--task-id", "t1", "--rediscover-codex", "--format", "json")
     ]
+
+
+def test_mailbox_eval_terminal_room_skips_extra_trigger(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    init_db(root)
+    conn = connect_db(root)
+    init_room(conn, room_id="t1", name="T1", purpose="p", project_cwd=tmp_path, workspace="w", first_turn="claude")
+    add_participant(conn, "t1", "claude")
+    add_participant(conn, "t1", "codex")
+    send_message(conn, root=root, room_id="t1", from_agent="claude", to_agent="codex", kind="message", status="final", summary="done", body="idempotency done")
+    conn.close()
+    calls = []
+    monkeypatch.setattr(mailbox_eval, "_run_mailbox", lambda *args, **kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0, "{}", ""))
+    terminal, _ = mailbox_eval._poll_to_terminal(root, "t1", 1, {"extra_triggers": 1})
+    assert terminal == "final"
+    assert calls == []

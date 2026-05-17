@@ -218,6 +218,8 @@ def _poll_to_terminal(
         try:
             room = conn.execute("SELECT status, last_message_id FROM rooms WHERE id=?", (task_id,)).fetchone()
             status = room["status"]
+            if status in {"final", "error", "stopped"}:
+                return status, observed_blocked
             if status == "blocked":
                 observed_blocked = True
                 injection = scenario.get("inject_on_blocked")
@@ -248,8 +250,6 @@ def _poll_to_terminal(
                     actions_done.add(ACTION_REDISCOVER_CODEX)
                     if _run_action(root, task_id, ACTION_REDISCOVER_CODEX) is not None:
                         return "error", observed_blocked
-            if status in {"final", "error", "stopped"}:
-                return status, observed_blocked
         finally:
             conn.close()
         if wezterm_exe is not None and pane_ids:
