@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pane_control import build_list_argv, build_send_text_argv, build_spawn_argv
+from pane_control import build_activate_pane_argv, build_list_argv, build_send_text_argv, build_spawn_argv
 
 
 WEZ = Path("C:/Program Files/WezTerm/wezterm.exe")
@@ -28,3 +28,9 @@ def test_build_send_text_argv_no_paste():
 def test_build_list_argv_json():
     argv = build_list_argv(wezterm_exe=WEZ)
     assert "list" in argv and "--format" in argv and "json" in argv
+
+
+def test_build_activate_pane_argv():
+    argv = build_activate_pane_argv(wezterm_exe=WEZ, pane_id=42)
+    assert "activate-pane" in argv
+    assert "--pane-id" in argv and "42" in argv

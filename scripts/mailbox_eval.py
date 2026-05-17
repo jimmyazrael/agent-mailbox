@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_chat import connect_db, export_transcript_md
-from pane_control import build_get_text_argv, build_send_text_argv, build_split_argv
+from pane_control import build_activate_pane_argv, build_get_text_argv, build_send_text_argv, build_split_argv
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 MAILBOX = SKILL_ROOT / "scripts" / "mailbox.py"
@@ -55,6 +55,26 @@ def _get_pane_text(wezterm_exe: Path, pane_id: int) -> str:
     return rv.stdout or ""
 
 
+def _send_choice(wezterm_exe: Path, pane_id: int, text: str) -> None:
+    subprocess.run(
+        build_activate_pane_argv(wezterm_exe=wezterm_exe, pane_id=pane_id),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    time.sleep(0.25)
+    subprocess.run(
+        build_send_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, text=text, no_paste=True),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+
+
 def _accept_trust_prompt(wezterm_exe: Path, pane_id: int, *, timeout_s: int = 12, no_prompt_grace_s: int = 3) -> bool:
     deadline = time.time() + timeout_s
     no_prompt_deadline = time.time() + no_prompt_grace_s
@@ -62,14 +82,7 @@ def _accept_trust_prompt(wezterm_exe: Path, pane_id: int, *, timeout_s: int = 12
         text = _get_pane_text(wezterm_exe, pane_id).lower()
         if "do you trust" in text or "yes, i trust" in text or "yes, continue" in text:
             for _ in range(2):
-                subprocess.run(
-                    build_send_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, text="1\r", no_paste=True),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=10,
-                )
+                _send_choice(wezterm_exe, pane_id, "1\r")
                 time.sleep(3)
                 text = _get_pane_text(wezterm_exe, pane_id).lower()
                 if "do you trust" not in text and "yes, i trust" not in text and "yes, continue" not in text:
@@ -83,16 +96,12 @@ def _accept_trust_prompt(wezterm_exe: Path, pane_id: int, *, timeout_s: int = 12
 
 def _approve_if_prompted(wezterm_exe: Path, pane_id: int) -> bool:
     text = _get_pane_text(wezterm_exe, pane_id).lower()
-    if "this command requires approval" not in text and "do you want to proceed" not in text:
+    if "update available" in text and "skip until next version" in text:
+        _send_choice(wezterm_exe, pane_id, "2\r")
+        return True
+    if "this command requires approval" not in text and "requires approval" not in text and "do you want to proceed" not in text:
         return False
-    subprocess.run(
-        build_send_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, text="1\r", no_paste=True),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-    )
+    _send_choice(wezterm_exe, pane_id, "1\r")
     return True
 
 

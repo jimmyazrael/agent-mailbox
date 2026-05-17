@@ -9,7 +9,7 @@ from typing import Optional
 
 from agent_chat import connect_db
 from mailbox_lib import TERMINAL_STATUSES, utc_now
-from pane_control import build_list_argv, build_send_text_argv
+from pane_control import build_activate_pane_argv, build_list_argv, build_send_text_argv
 from tui_launcher import lookup_pane, parse_wezterm_list
 
 
@@ -32,6 +32,7 @@ def trigger_text(*, agent: str, peer: str, task_id: str, root: Path, first_turn:
 
 def send_trigger(*, wezterm_exe: Path, pane_id: int, agent: str, peer: str, task_id: str, root: Path, first_turn: bool = False) -> bool:
     text = trigger_text(agent=agent, peer=peer, task_id=task_id, root=root, first_turn=first_turn)
+    subprocess.run(build_activate_pane_argv(wezterm_exe=wezterm_exe, pane_id=pane_id), capture_output=True, text=True)
     # Real Claude/Codex TUIs may accept the text but ignore a trailing CR in the
     # same send-text call. Send Enter separately; this validated U1 on Windows.
     rv_text = subprocess.run(

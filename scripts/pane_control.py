@@ -80,3 +80,7 @@ def build_get_text_argv(
         "--start-line",
         str(start_line),
     ]
+
+
+def build_activate_pane_argv(*, wezterm_exe: Path, pane_id: int, prefer_mux: bool = True) -> List[str]:
+    return _base(wezterm_exe, prefer_mux) + ["activate-pane", "--pane-id", str(pane_id)]
