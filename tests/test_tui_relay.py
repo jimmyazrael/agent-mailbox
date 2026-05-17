@@ -39,6 +39,13 @@ def test_run_once_force_retries_same_message(monkeypatch, tmp_path):
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
     assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm"), force=True) == "triggered"
     assert len(calls) == 2
+    assert calls[1]["retry"] is True
+
+
+def test_retry_trigger_text_warns_duplicate_can_be_ignored(tmp_path):
+    text = trigger_text(agent="claude", peer="codex", task_id="t1", root=tmp_path, retry=True)
+    assert "previous trigger may not have landed" in text
+    assert "ignore this duplicate reminder" in text
 
 
 def test_run_once_first_turn_trigger_includes_first_turn_flag(monkeypatch, tmp_path):

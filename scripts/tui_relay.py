@@ -13,12 +13,18 @@ from pane_control import build_activate_pane_argv, build_get_text_argv, build_li
 from tui_launcher import lookup_pane, parse_wezterm_list
 
 
-def trigger_text(*, agent: str, peer: str, task_id: str, root: Path, first_turn: bool = False) -> str:
-    lead = (
-        f"You have the first turn on agent-mailbox task {task_id}."
-        if first_turn
-        else f"{peer.capitalize()} has replied on agent-mailbox task {task_id}."
-    )
+def trigger_text(*, agent: str, peer: str, task_id: str, root: Path, first_turn: bool = False, retry: bool = False) -> str:
+    if retry:
+        lead = (
+            f"Reminder for agent-mailbox task {task_id}: a previous trigger may not have landed. "
+            "If you already saw this turn and are working on it, ignore this duplicate reminder."
+        )
+    else:
+        lead = (
+            f"You have the first turn on agent-mailbox task {task_id}."
+            if first_turn
+            else f"{peer.capitalize()} has replied on agent-mailbox task {task_id}."
+        )
     mailbox_py = Path(__file__).resolve().parent / "mailbox.py"
     return (
         f"{lead} "
@@ -30,8 +36,18 @@ def trigger_text(*, agent: str, peer: str, task_id: str, root: Path, first_turn:
     )
 
 
-def send_trigger(*, wezterm_exe: Path, pane_id: int, agent: str, peer: str, task_id: str, root: Path, first_turn: bool = False) -> bool:
-    text = trigger_text(agent=agent, peer=peer, task_id=task_id, root=root, first_turn=first_turn)
+def send_trigger(
+    *,
+    wezterm_exe: Path,
+    pane_id: int,
+    agent: str,
+    peer: str,
+    task_id: str,
+    root: Path,
+    first_turn: bool = False,
+    retry: bool = False,
+) -> bool:
+    text = trigger_text(agent=agent, peer=peer, task_id=task_id, root=root, first_turn=first_turn, retry=retry)
     subprocess.run(
         build_activate_pane_argv(wezterm_exe=wezterm_exe, pane_id=pane_id),
         capture_output=True,
@@ -176,6 +192,7 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path, force: bool = False
             task_id=task_id,
             root=root,
             first_turn=first_turn,
+            retry=force,
         ):
             _pause_relay(conn, task_id, f"trigger_failed:{turn}")
             return "send_failed"
