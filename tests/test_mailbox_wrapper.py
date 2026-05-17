@@ -1273,7 +1273,7 @@ def test_archive_rmtree_failure_keeps_live_rows(monkeypatch, tmp_path):
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
     task_id = json.loads(init.stdout)["data"]["task_id"]
     task_dir = root / task_id
-    task_dir.mkdir(parents=True)
+    task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / "artifact.txt").write_text("locked", encoding="utf-8")
     conn = connect_db(root)
     send_message(

@@ -99,6 +99,16 @@ CREATE TABLE IF NOT EXISTS room_state (
     value_json TEXT NOT NULL,
     PRIMARY KEY(room_id, key)
 );
+CREATE TABLE IF NOT EXISTS message_sources (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    room_id TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    source_path TEXT,
+    source_hash TEXT NOT NULL,
+    imported_at TEXT NOT NULL,
+    UNIQUE(room_id, source_type, source_hash),
+    UNIQUE(room_id, source_type, source_path)
+);
 """
 
 
@@ -114,6 +124,12 @@ def connect_db(root: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def ensure_outbox_dirs(root: Path, room_id: str) -> None:
+    outbox = root / room_id / "outbox"
+    for agent in ("claude", "codex"):
+        (outbox / agent).mkdir(parents=True, exist_ok=True)
 
 
 def schema_version(conn: sqlite3.Connection) -> int:
@@ -319,6 +335,9 @@ def send_message(
     next_turn: Optional[str] = None,
     increment_round: bool = True,
     reply_to: Optional[int] = None,
+    source_type: Optional[str] = None,
+    source_path: Optional[str] = None,
+    source_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     if status not in VALID_MESSAGE_STATUSES:
         raise ValueError(f"invalid message status: {status}")
@@ -376,6 +395,14 @@ def send_message(
             rel_path = _write_artifact(root, room_id, message_id, body)
             artifact_path = root / room_id / rel_path
             conn.execute("UPDATE messages SET body_path=? WHERE id=?", (rel_path, message_id))
+        if source_type is not None:
+            if not source_hash:
+                raise ValueError("source_hash is required when source_type is set")
+            conn.execute(
+                "INSERT INTO message_sources(message_id, room_id, source_type, source_path, source_hash, imported_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (message_id, room_id, source_type, source_path, source_hash, now),
+            )
         if status == "continue":
             conn.execute(
                 "UPDATE rooms SET turn=?, status='waiting', last_message_id=?, round=round+?, "
@@ -421,6 +448,14 @@ def get_message_body(root: Path, message_id: int) -> str:
         return (root / row["room_id"] / row["body_path"]).read_text(encoding="utf-8")
     finally:
         conn.close()
+
+
+def has_message_source(conn: sqlite3.Connection, *, room_id: str, source_type: str, source_hash: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM message_sources WHERE room_id=? AND source_type=? AND source_hash=?",
+        (room_id, source_type, source_hash),
+    ).fetchone()
+    return row is not None
 
 
 def peek_latest(conn: sqlite3.Connection, room_id: str) -> Optional[Dict[str, Any]]:

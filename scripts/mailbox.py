@@ -19,6 +19,7 @@ from agent_chat import (
     ack_message,
     add_participant,
     connect_db,
+    ensure_outbox_dirs,
     export_transcript_md,
     get_message_body,
     init_db,
@@ -254,6 +255,7 @@ def _init_task(args, root: Path) -> dict[str, Any]:
             parent_room_id=args.parent_task_id,
             exit_condition=args.exit_condition,
         )
+        ensure_outbox_dirs(root, task_id)
         for agent in ("claude", "codex"):
             add_participant(conn, task_id, agent, role="worker" if agent == args.first_turn else "reviewer")
         set_session_metadata(
@@ -534,7 +536,10 @@ def cmd_tui_relay(args) -> int:
     finally:
         conn.close()
     from tui_launcher import find_wezterm
-    from tui_relay import run_watcher_loop
+    if os.environ.get("AGENT_MAILBOX_RELAY_VERSION") == "2":
+        from tui_relay_v2 import run_watcher_loop
+    else:
+        from tui_relay import run_watcher_loop
 
     result = run_watcher_loop(
         root=root,
@@ -1216,6 +1221,7 @@ ARCHIVE_TABLES = (
     "panes",
     "tui_relay_state",
     "messages",
+    "message_sources",
     "receipts",
     "room_state",
 )
@@ -1229,6 +1235,8 @@ def _copy_table_rows(src: sqlite3.Connection, dst: sqlite3.Connection, *, table:
         ).fetchall()
     elif table == "messages":
         rows = src.execute("SELECT * FROM messages WHERE room_id=? ORDER BY id", (room_id,)).fetchall()
+    elif table == "message_sources":
+        rows = src.execute("SELECT * FROM message_sources WHERE room_id=? ORDER BY message_id", (room_id,)).fetchall()
     elif table == "rooms":
         rows = src.execute("SELECT * FROM rooms WHERE id=?", (room_id,)).fetchall()
     else:
@@ -1296,6 +1304,7 @@ def cmd_archive(args) -> int:
         conn.execute("BEGIN IMMEDIATE")
         try:
             conn.execute("DELETE FROM receipts WHERE message_id IN (SELECT id FROM messages WHERE room_id=?)", (task_id,))
+            conn.execute("DELETE FROM message_sources WHERE room_id=?", (task_id,))
             for table in ("room_state", "tui_relay_state", "panes", "agent_sessions", "participants", "messages"):
                 conn.execute(f"DELETE FROM {table} WHERE room_id=?", (task_id,))
             conn.execute("DELETE FROM rooms WHERE id=?", (task_id,))
