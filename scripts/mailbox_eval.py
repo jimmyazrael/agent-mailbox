@@ -63,6 +63,15 @@ def _run_mailbox(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[
         return subprocess.CompletedProcess(rv.args, rv.returncode, stdout.read(), stderr.read())
 
 
+def _command_error(rv: subprocess.CompletedProcess[str]) -> str:
+    parts = []
+    if rv.stderr:
+        parts.append(rv.stderr.strip())
+    if rv.stdout:
+        parts.append(rv.stdout.strip())
+    return "\n".join(part for part in parts if part) or f"command failed with rc={rv.returncode}"
+
+
 def _get_pane_text(wezterm_exe: Path, pane_id: int) -> str:
     rv = subprocess.run(
         build_get_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, start_line=-80),
@@ -308,7 +317,7 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
     ]
     rv = _run_mailbox(*init_args, timeout=120)
     if rv.returncode != 0:
-        raise RuntimeError(rv.stderr or rv.stdout)
+        raise RuntimeError(_command_error(rv))
     task_id = json.loads(rv.stdout)["data"]["task_id"]
 
     launch_rv = _run_mailbox(
@@ -324,7 +333,7 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         timeout=120,
     )
     if launch_rv.returncode != 0:
-        raise RuntimeError(launch_rv.stderr or launch_rv.stdout)
+        raise RuntimeError(_command_error(launch_rv))
     launch = json.loads(launch_rv.stdout)["data"]
 
     from tui_launcher import find_wezterm
@@ -366,7 +375,7 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
         stdin=subprocess.DEVNULL,
     )
     if relay_rv.returncode != 0:
-        raise RuntimeError(relay_rv.stderr or relay_rv.stdout)
+        raise RuntimeError(_command_error(relay_rv))
     relay_pane_id = None
     if relay_rv.stdout.strip().isdigit():
         relay_pane_id = int(relay_rv.stdout.strip())
