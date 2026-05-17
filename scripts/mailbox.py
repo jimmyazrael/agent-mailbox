@@ -1123,16 +1123,11 @@ def _rooms_by_workspace(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
 
 def _find_stale_workspaces(*, wezterm_exe: Path, rooms: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     from pane_control import build_list_argv
-    from tui_launcher import parse_wezterm_list
+    from tui_launcher import parse_wezterm_list, run_wezterm_cli
 
-    rv = subprocess.run(
+    rv = run_wezterm_cli(
         build_list_argv(wezterm_exe=wezterm_exe),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=15,
-        stdin=subprocess.DEVNULL,
     )
     rv.check_returncode()
     panes = parse_wezterm_list(rv.stdout)

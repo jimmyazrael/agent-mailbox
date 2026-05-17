@@ -661,6 +661,23 @@ def test_start_warns_about_stale_workspaces_without_reaping(monkeypatch, tmp_pat
             killed.append(argv)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
+    def fake_wezterm_cli(argv, **kwargs):
+        if "list" in argv:
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                json.dumps(
+                    [
+                        {"pane_id": 91, "workspace": "agent-mailbox-orphan", "window_id": 99},
+                        {"pane_id": 11, "workspace": launched_workspace or "agent-mailbox-active", "window_id": 99},
+                    ]
+                ),
+                "",
+            )
+        if "kill-pane" in argv:
+            killed.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
     monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
     monkeypatch.setattr("tui_launcher.find_codex", lambda: None)
     monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
@@ -676,6 +693,7 @@ def test_start_warns_about_stale_workspaces_without_reaping(monkeypatch, tmp_pat
     monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
     monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
     monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("tui_launcher.run_wezterm_cli", fake_wezterm_cli)
 
     import mailbox as mailbox_cli
 
@@ -1174,6 +1192,10 @@ def test_reap_stale_workspaces_dry_run_and_yes(monkeypatch, tmp_path):
 
     def fake_wezterm_cli(argv, **kwargs):
         calls.append(argv)
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(panes), "")
+        if "kill-pane" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr("subprocess.run", fake_run)
