@@ -172,6 +172,43 @@ def test_post_accepts_role_mode_protocol_header(tmp_path):
     assert json.loads(post.stdout)["data"]["warnings"] == []
 
 
+def test_post_warns_owner_not_participant(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    body = "\n".join(
+        [
+            "Mode: EXECUTE",
+            "Coordinator: claude",
+            "Owner: buildbot",
+            "Reviewer: codex",
+            "Next action: buildbot runs the next step",
+            "Done when: tests pass",
+        ]
+    )
+    post = _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "claude",
+        "--to",
+        "codex",
+        "--status",
+        "continue",
+        "--summary",
+        "bad owner",
+        "--body",
+        body,
+        "--format",
+        "json",
+    )
+    assert post.returncode == 0, post.stderr
+    assert "protocol Owner is not a participant: buildbot" in json.loads(post.stdout)["data"]["warnings"]
+
+
 def test_post_accepts_lowercase_protocol_mode(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")

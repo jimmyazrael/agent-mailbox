@@ -281,6 +281,29 @@ def _next_turn_from_continue(
     return to_agent
 
 
+def _participant_names(conn: sqlite3.Connection, room_id: str) -> set[str]:
+    return {row["agent"] for row in conn.execute("SELECT agent FROM participants WHERE room_id=?", (room_id,)).fetchall()}
+
+
+def _max_rounds(conn: sqlite3.Connection, room_id: str) -> Optional[int]:
+    row = conn.execute("SELECT value_json FROM room_state WHERE room_id=? AND key='limits'", (room_id,)).fetchone()
+    if not row:
+        return None
+    try:
+        value = json.loads(row["value_json"])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    max_rounds = value.get("max_rounds") if isinstance(value, dict) else None
+    return int(max_rounds) if isinstance(max_rounds, int) and max_rounds > 0 else None
+
+
+def _mark_room_error(conn: sqlite3.Connection, *, room_id: str, reason: str, now: str) -> None:
+    conn.execute(
+        "UPDATE rooms SET turn=NULL, status='error', blocked_reason=?, updated_at=? WHERE id=?",
+        (reason, now, room_id),
+    )
+
+
 def send_message(
     conn: sqlite3.Connection,
     *,
@@ -304,6 +327,31 @@ def send_message(
     artifact_path: Optional[Path] = None
     conn.execute("BEGIN IMMEDIATE")
     try:
+        room = conn.execute("SELECT round FROM rooms WHERE id=?", (room_id,)).fetchone()
+        if room is None:
+            raise ValueError(f"room not found: {room_id}")
+        new_turn: Optional[str] = None
+        if status == "continue":
+            if increment_round:
+                max_rounds = _max_rounds(conn, room_id)
+                if max_rounds is not None and int(room["round"]) + 1 > max_rounds:
+                    reason = f"max_rounds_exceeded:{max_rounds}"
+                    _mark_room_error(conn, room_id=room_id, reason=reason, now=now)
+                    conn.execute("COMMIT")
+                    raise RuntimeError(reason)
+            new_turn = _next_turn_from_continue(
+                conn,
+                room_id=room_id,
+                from_agent=from_agent,
+                to_agent=to_agent,
+                body=body,
+                next_turn=next_turn,
+            )
+            if new_turn is not None and new_turn not in _participant_names(conn, room_id):
+                reason = f"invalid_turn_target:{new_turn}"
+                _mark_room_error(conn, room_id=room_id, reason=reason, now=now)
+                conn.execute("COMMIT")
+                raise ValueError(reason)
         cur = conn.execute(
             "INSERT INTO messages(room_id, from_agent, to_agent, kind, status, summary, "
             "body_text, body_path, blocked_reason, reply_to, created_at) "
@@ -329,14 +377,6 @@ def send_message(
             artifact_path = root / room_id / rel_path
             conn.execute("UPDATE messages SET body_path=? WHERE id=?", (rel_path, message_id))
         if status == "continue":
-            new_turn = _next_turn_from_continue(
-                conn,
-                room_id=room_id,
-                from_agent=from_agent,
-                to_agent=to_agent,
-                body=body,
-                next_turn=next_turn,
-            )
             conn.execute(
                 "UPDATE rooms SET turn=?, status='waiting', last_message_id=?, round=round+?, "
                 "blocked_reason=NULL, updated_at=? WHERE id=?",
@@ -357,7 +397,11 @@ def send_message(
         conn.execute("COMMIT")
         return {"message_id": message_id, "created_at": now, "body_inline": inline, "body_path": rel_path}
     except Exception:
-        conn.execute("ROLLBACK")
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.OperationalError as exc:
+            if "no transaction is active" not in str(exc).lower():
+                raise
         if artifact_path is not None:
             try:
                 artifact_path.unlink()

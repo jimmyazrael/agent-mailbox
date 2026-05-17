@@ -154,6 +154,68 @@ def test_continue_ignores_non_participant_protocol_owner(tmp_path):
     assert room["turn"] == "claude"
 
 
+def test_send_message_rejects_invalid_turn_target_and_marks_error(tmp_path):
+    conn = _setup(tmp_path)
+    with pytest.raises(ValueError, match="invalid_turn_target:buildbot"):
+        send_message(
+            conn,
+            root=tmp_path,
+            room_id="t1",
+            from_agent="claude",
+            to_agent="codex",
+            kind="message",
+            status="continue",
+            summary="bad next turn",
+            body="body",
+            next_turn="buildbot",
+        )
+    room = conn.execute("SELECT status, turn, blocked_reason, last_message_id FROM rooms WHERE id='t1'").fetchone()
+    assert dict(room) == {
+        "status": "error",
+        "turn": None,
+        "blocked_reason": "invalid_turn_target:buildbot",
+        "last_message_id": 0,
+    }
+    assert conn.execute("SELECT COUNT(*) AS n FROM messages WHERE room_id='t1'").fetchone()["n"] == 0
+
+
+def test_send_message_enforces_max_rounds_and_marks_error(tmp_path):
+    conn = _setup(tmp_path)
+    room_state_set(conn, "t1", "limits", {"max_rounds": 1})
+    send_message(
+        conn,
+        root=tmp_path,
+        room_id="t1",
+        from_agent="claude",
+        to_agent="codex",
+        kind="message",
+        status="continue",
+        summary="round 1",
+        body="body",
+    )
+    with pytest.raises(RuntimeError, match="max_rounds_exceeded:1"):
+        send_message(
+            conn,
+            root=tmp_path,
+            room_id="t1",
+            from_agent="codex",
+            to_agent="claude",
+            kind="message",
+            status="continue",
+            summary="round 2",
+            body="body",
+        )
+    room = conn.execute("SELECT status, turn, blocked_reason, round, last_message_id FROM rooms WHERE id='t1'").fetchone()
+    assert dict(room) == {
+        "status": "error",
+        "turn": None,
+        "blocked_reason": "max_rounds_exceeded:1",
+        "round": 1,
+        "last_message_id": 1,
+    }
+    assert conn.execute("SELECT COUNT(*) AS n FROM messages WHERE room_id='t1'").fetchone()["n"] == 1
+
+
 def test_owner_from_protocol_handles_none_and_case():
     assert owner_from_protocol("Mode: EXECUTE\nOwner: CoDeX\n") == "codex"
     assert owner_from_protocol("Mode: DONE\nOwner: none\n") is None

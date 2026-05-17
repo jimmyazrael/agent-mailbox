@@ -56,7 +56,7 @@ def _header_value(body: str, field: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
-def lint_protocol_header(*, status: str, body: str) -> list[str]:
+def lint_protocol_header(*, status: str, body: str, participants: Optional[set[str]] = None) -> list[str]:
     if status in {"final", "error"}:
         return []
     warnings: list[str] = []
@@ -74,6 +74,16 @@ def lint_protocol_header(*, status: str, body: str) -> list[str]:
     blocked_on = (_header_value(body, "Blocked on") or "").strip().lower()
     if status == "continue" and next_action in {"", "none", "n/a", "na"} and blocked_on in {"", "none", "n/a", "na"}:
         warnings.append("non-terminal posts must name a concrete Next action or Blocked on")
+    owner = (_header_value(body, "Owner") or "").strip().lower()
+    mode_norm = (mode or "").strip().upper()
+    if (
+        participants is not None
+        and status == "continue"
+        and mode_norm in {"EXECUTE", "REVIEW"}
+        and owner not in {"", "none", "n/a", "na", "-"}
+        and owner not in participants
+    ):
+        warnings.append(f"protocol Owner is not a participant: {owner}")
     return warnings
 
 
@@ -114,6 +124,66 @@ def _control_flags(subparser: argparse.ArgumentParser) -> None:
 
 def _resolve(conn, task_id: str) -> str:
     return resolve_task_id(conn, task_id)
+
+
+def _startup_not_ready_reason(startup: dict[str, Any]) -> str:
+    agents = startup.get("agents") or {}
+    if agents:
+        return "startup_not_ready:" + ",".join(
+            f"{agent}={info.get('state', 'unknown')}" for agent, info in sorted(agents.items())
+        )
+    return "startup_not_ready:workspace=missing"
+
+
+def _validate_task_startup(conn: sqlite3.Connection, *, task_id: str, wezterm_exe: Path) -> dict[str, Any]:
+    from tui_launcher import validate_workspace_startup
+
+    room = conn.execute("SELECT workspace FROM rooms WHERE id=?", (task_id,)).fetchone()
+    panes = {
+        row["pane_role"]: row["pane_id"]
+        for row in conn.execute("SELECT pane_role, pane_id FROM panes WHERE room_id=?", (task_id,)).fetchall()
+    }
+    missing = [agent for agent in ("claude", "codex") if panes.get(agent) is None]
+    if room is None or missing:
+        return {
+            "workspace": room["workspace"] if room else None,
+            "visible": False,
+            "pane_count": 0,
+            "agents": {agent: {"pane_id": panes.get(agent), "state": "missing_pane"} for agent in ("claude", "codex")},
+            "ready": False,
+        }
+    return validate_workspace_startup(
+        wezterm_exe=wezterm_exe,
+        workspace=room["workspace"],
+        claude_pane_id=int(panes["claude"]),
+        codex_pane_id=int(panes["codex"]),
+    )
+
+
+def _apply_relay_startup_gate(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    startup: dict[str, Any],
+    clear_if_ready: bool,
+) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if startup.get("ready"):
+            if clear_if_ready:
+                conn.execute(
+                    "UPDATE tui_relay_state SET paused=0, pause_reason=NULL WHERE room_id=?",
+                    (task_id,),
+                )
+        else:
+            conn.execute(
+                "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",
+                (_startup_not_ready_reason(startup), task_id),
+            )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def _spawn_workspace_tab(
@@ -334,13 +404,10 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                     text = rv.stdout.strip()
                     relay_pane_id = int(text) if text.isdigit() else None
                 else:
-                    reason = "startup_not_ready:" + ",".join(
-                        f"{agent}={info['state']}" for agent, info in startup["agents"].items()
-                    )
                     conn.execute("BEGIN IMMEDIATE")
                     conn.execute(
                         "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",
-                        (reason, task_id),
+                        (_startup_not_ready_reason(startup), task_id),
                     )
                     conn.execute("COMMIT")
             if getattr(args, "with_chat", False):
@@ -504,7 +571,8 @@ def cmd_post(args) -> int:
             body = args.body_file.read_text(encoding="utf-8")
         else:
             body = sys.stdin.read()
-        protocol_warnings = lint_protocol_header(status=args.status, body=body)
+        participants = {str(row["agent"]).strip().lower() for row in conn.execute("SELECT agent FROM participants WHERE room_id=?", (task_id,)).fetchall()}
+        protocol_warnings = lint_protocol_header(status=args.status, body=body, participants=participants)
         rv = send_message(
             conn,
             root=root,
@@ -1021,6 +1089,7 @@ def cmd_resume(args) -> int:
     root = _root(args)
     conn = connect_db(root)
     actions: list[str] = []
+    startup: dict[str, Any] | None = None
     try:
         task_id = _resolve(conn, args.task_id) if args.task_id else _pick_active(conn)
         room = conn.execute("SELECT * FROM rooms WHERE id=?", (task_id,)).fetchone()
@@ -1129,17 +1198,15 @@ def cmd_resume(args) -> int:
             rv.check_returncode()
             if rv.stdout.strip().isdigit():
                 set_pane(conn, task_id, "claude", pane_id=int(rv.stdout.strip()))
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            "UPDATE tui_relay_state SET paused=0, pause_reason=NULL WHERE room_id=?",
-            (task_id,),
-        )
-        if room["status"] == "stopped":
+        startup = _validate_task_startup(conn, task_id=task_id, wezterm_exe=wez)
+        _apply_relay_startup_gate(conn, task_id=task_id, startup=startup, clear_if_ready=True)
+        if startup.get("ready") and room["status"] == "stopped":
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute("UPDATE rooms SET status='waiting' WHERE id=?", (task_id,))
-        conn.execute("COMMIT")
+            conn.execute("COMMIT")
     finally:
         conn.close()
-    return _emit(args, ok=True, data={"task_id": task_id, "actions": actions})
+    return _emit(args, ok=True, data={"task_id": task_id, "actions": actions, "startup": startup})
 
 
 def cmd_stop(args) -> int:
@@ -1228,6 +1295,9 @@ def cmd_repair(args) -> int:
             if rv.returncode != 0:
                 return _emit(args, ok=False, error=f"failed to send restart command to {agent} pane: {rv.stderr.strip()}")
             data["restarted_agent"] = agent
+            startup = _validate_task_startup(conn, task_id=task_id, wezterm_exe=find_wezterm())
+            _apply_relay_startup_gate(conn, task_id=task_id, startup=startup, clear_if_ready=False)
+            data["startup"] = startup
         if args.use_last_codex_session:
             if not args.yes:
                 return _emit(args, ok=False, error="--use-last-codex-session requires --yes")

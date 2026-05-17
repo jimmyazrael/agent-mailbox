@@ -71,3 +71,61 @@ def test_resume_preserves_conversation_state(monkeypatch, tmp_path):
     conn = connect_db(root)
     room = conn.execute("SELECT turn, round, last_message_id FROM rooms WHERE id='t1'").fetchone()
     assert dict(room) == {"turn": "claude", "round": 0, "last_message_id": 0}
+
+
+def test_resume_keeps_relay_paused_when_startup_not_ready(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    _make_task(root)
+    wez = tmp_path / "wezterm.exe"
+    wez.write_bytes(b"")
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: wez)
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda argv, **kwargs: subprocess.CompletedProcess(
+            argv,
+            0,
+            '[{"pane_id":11,"workspace":"agent-mailbox-t1"},{"pane_id":12,"workspace":"agent-mailbox-t1"}]' if "list" in argv else "",
+            "",
+        ),
+    )
+    monkeypatch.setattr(
+        "tui_launcher.validate_workspace_startup",
+        lambda **kwargs: {
+            "ready": False,
+            "visible": True,
+            "agents": {"claude": {"state": "ready"}, "codex": {"state": "update_prompt"}},
+        },
+    )
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(["resume", "--root", str(root), "--task-id", "t1", "--format", "json"])
+    assert mailbox_cli.cmd_resume(args) == 0
+    conn = connect_db(root)
+    relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id='t1'").fetchone()
+    assert relay["paused"] == 1
+    assert relay["pause_reason"] == "startup_not_ready:claude=ready,codex=update_prompt"
+
+
+def test_repair_restart_agent_applies_startup_gate(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    _make_task(root)
+    wez = tmp_path / "wezterm.exe"
+    wez.write_bytes(b"")
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: wez)
+    monkeypatch.setattr("subprocess.run", lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, "", ""))
+    monkeypatch.setattr(
+        "tui_launcher.validate_workspace_startup",
+        lambda **kwargs: {
+            "ready": False,
+            "visible": True,
+            "agents": {"claude": {"state": "shell"}, "codex": {"state": "ready"}},
+        },
+    )
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(["repair", "--root", str(root), "--task-id", "t1", "--restart-agent", "claude", "--format", "json"])
+    assert mailbox_cli.cmd_repair(args) == 0
+    conn = connect_db(root)
+    relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id='t1'").fetchone()
+    assert relay["paused"] == 1
+    assert relay["pause_reason"] == "startup_not_ready:claude=shell,codex=ready"

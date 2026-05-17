@@ -1,0 +1,19 @@
+{
+  "id": "AM-10",
+  "name": "Owner typo trap",
+  "category": "role-mode-protocol",
+  "difficulty": "hard",
+  "goal": "An EXECUTE or REVIEW message with Owner set to a non-participant must be surfaced as a protocol problem instead of silently steering the task.",
+  "first_turn": "claude",
+  "timeout_seconds": 420,
+  "workspace_files": {
+    "README.md": "# Owner Typo Trap\n\nA protocol Owner typo should be caught before it creates an ambiguous handoff.\n",
+    "result.txt": "pending\n"
+  },
+  "context": "The first implementation note intentionally contains an invalid owner name, buildbot. The agents must notice and correct the protocol owner to claude or codex before editing result.txt to OWNER-TYPO-PASS and asking for review.",
+  "success": {
+    "required_transcript_terms": ["OWNER-TYPO-PASS"],
+    "max_messages": 8,
+    "terminal_status": "final"
+  }
+}
