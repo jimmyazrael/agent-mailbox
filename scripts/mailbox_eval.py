@@ -33,14 +33,23 @@ class ScenarioResult:
 
 
 def _run_mailbox(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [sys.executable, str(MAILBOX), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-    )
+    # Real TUI launches can leave descendant processes holding inherited pipe
+    # handles. Capturing through temp files waits only for the direct child.
+    with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as stdout, tempfile.TemporaryFile(
+        "w+", encoding="utf-8", errors="replace"
+    ) as stderr:
+        rv = subprocess.run(
+            [sys.executable, str(MAILBOX), *args],
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+        stdout.seek(0)
+        stderr.seek(0)
+        return subprocess.CompletedProcess(rv.args, rv.returncode, stdout.read(), stderr.read())
 
 
 def _get_pane_text(wezterm_exe: Path, pane_id: int) -> str:
