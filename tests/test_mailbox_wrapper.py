@@ -188,6 +188,24 @@ def test_launch_tui_fake_panes(monkeypatch, tmp_path):
     assert relay["pause_reason"] is None
 
 
+def test_launch_tui_with_chat_fake_pane_is_opt_in(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    env = dict(
+        **__import__("os").environ,
+        AGENT_MAILBOX_FAKE_PANE_IDS="11,12,13,14",
+        AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"),
+    )
+    rv = _run("launch-tui", "--root", str(root), "--task-id", task_id, "--with-chat", "--format", "json", env=env)
+    assert rv.returncode == 0, rv.stderr
+    data = json.loads(rv.stdout)["data"]
+    assert data["chat_pane_id"] == 14
+    conn = connect_db(root)
+    chat = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='chat'", (task_id,)).fetchone()
+    assert chat["pane_id"] == 14
+
+
 def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
@@ -242,6 +260,131 @@ def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
     conn = connect_db(root)
     relay = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='relay'", (task_id,)).fetchone()
     assert relay["pane_id"] == 23
+
+
+def test_start_with_chat_binds_chat_fake_pane(tmp_path):
+    root = tmp_path / "mb"
+    env = dict(
+        **__import__("os").environ,
+        AGENT_MAILBOX_FAKE_PANE_IDS="21,22,23,24",
+        AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"),
+    )
+    rv = _run(
+        "start",
+        "--root",
+        str(root),
+        "--prefix",
+        "t",
+        "--goal",
+        "g",
+        "--project-cwd",
+        str(tmp_path),
+        "--with-chat",
+        "--format",
+        "json",
+        env=env,
+    )
+    assert rv.returncode == 0, rv.stderr
+    task_id = json.loads(rv.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    panes = {row["pane_role"]: row["pane_id"] for row in conn.execute("SELECT * FROM panes WHERE room_id=?", (task_id,))}
+    assert panes["relay"] == 23
+    assert panes["chat"] == 24
+
+
+def test_watch_chat_emits_existing_messages_without_mutating_state(tmp_path):
+    root = tmp_path / "mb"
+    init = _run(
+        "init",
+        "--root",
+        str(root),
+        "--prefix",
+        "t",
+        "--goal",
+        "g",
+        "--project-cwd",
+        str(tmp_path),
+        "--context",
+        "bootstrap body",
+        "--format",
+        "json",
+    )
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    assert _run(
+        "post",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--from",
+        "claude",
+        "--to",
+        "codex",
+        "--status",
+        "continue",
+        "--summary",
+        "hello",
+        "--body",
+        "body",
+    ).returncode == 0
+    conn = connect_db(root)
+    before_room = dict(conn.execute("SELECT status, turn, last_message_id, round FROM rooms WHERE id=?", (task_id,)).fetchone())
+    before_messages = conn.execute("SELECT COUNT(*) AS n FROM messages WHERE room_id=?", (task_id,)).fetchone()["n"]
+    conn.close()
+    rv = _run("watch-chat", "--root", str(root), "--task-id", task_id, "--max-iters", "1", "--no-color")
+    assert rv.returncode == 0, rv.stderr
+    assert "[1]" in rv.stdout
+    assert "user -> broadcast [continue] bootstrap context" in rv.stdout
+    assert "claude -> codex [continue] hello" in rv.stdout
+    assert "body" in rv.stdout
+    conn = connect_db(root)
+    after_room = dict(conn.execute("SELECT status, turn, last_message_id, round FROM rooms WHERE id=?", (task_id,)).fetchone())
+    after_messages = conn.execute("SELECT COUNT(*) AS n FROM messages WHERE room_id=?", (task_id,)).fetchone()["n"]
+    conn.close()
+    assert after_room == before_room
+    assert after_messages == before_messages
+
+
+def test_watch_chat_from_message_id_emits_only_newer_messages(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    _run("post", "--root", str(root), "--task-id", task_id, "--from", "claude", "--to", "codex", "--status", "continue", "--summary", "old", "--body", "old body")
+    _run("post", "--root", str(root), "--task-id", task_id, "--from", "codex", "--to", "claude", "--status", "continue", "--summary", "new", "--body", "new body")
+    rv = _run("watch-chat", "--root", str(root), "--task-id", task_id, "--from-message-id", "1", "--max-iters", "1", "--no-color")
+    assert rv.returncode == 0, rv.stderr
+    assert "old body" not in rv.stdout
+    assert "codex -> claude [continue] new" in rv.stdout
+    assert "new body" in rv.stdout
+
+
+def test_watch_chat_terminal_room_exits_after_grace(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    _run("post", "--root", str(root), "--task-id", task_id, "--from", "claude", "--to", "codex", "--status", "final", "--summary", "done", "--body", "done")
+    rv = _run(
+        "watch-chat",
+        "--root",
+        str(root),
+        "--task-id",
+        task_id,
+        "--poll-interval-s",
+        "0.01",
+        "--terminal-grace-s",
+        "0.01",
+        "--no-color",
+    )
+    assert rv.returncode == 0, rv.stderr
+    assert "[agent-mailbox] room terminal: final" in rv.stdout
+
+
+def test_launch_chat_pane_cmd_shape():
+    text = (SKILL_ROOT / "scripts" / "launch_chat_pane.cmd").read_text(encoding="utf-8")
+    assert "watch-chat --root" in text
+    assert "AGENT_MAILBOX_TASK_ID" in text
+    assert "AGENT_MAILBOX_ROOT" in text
+    assert "cmd /k" in text
 
 
 def test_pause_stop_and_repair_rebind(tmp_path):

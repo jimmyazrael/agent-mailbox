@@ -5,8 +5,10 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Optional
@@ -31,6 +33,8 @@ from agent_chat import (
     update_codex_discovery,
 )
 from mailbox_lib import default_root, generate_task_id, peer_for, pid_exists, utc_now
+
+TERMINAL_ROOM_STATUSES = {"final", "error", "stopped"}
 
 PROTOCOL_HEADER_FIELDS = ("Mode", "Coordinator", "Owner", "Reviewer", "Next action", "Done when")
 VALID_PROTOCOL_MODES = {"DISCUSS", "EXECUTE", "REVIEW", "BLOCKED", "DONE"}
@@ -206,6 +210,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             parts = [int(x.strip()) for x in fake.split(",")]
             result = {"workspace": workspace, "claude_pane_id": parts[0], "codex_pane_id": parts[1], "spawned_at": utc_now()}
             relay_pane_id = parts[2] if launch_relay and len(parts) > 2 else None
+            chat_pane_id = parts[3] if getattr(args, "with_chat", False) and len(parts) > 3 else None
         else:
             from tui_launcher import ensure_mux_alive, find_wezterm, launch_workspace
 
@@ -219,6 +224,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                 codex_cmd=codex_cmd,
             )
             relay_pane_id = None
+            chat_pane_id = None
             if launch_relay:
                 from pane_control import build_split_argv
 
@@ -248,10 +254,39 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                 rv.check_returncode()
                 text = rv.stdout.strip()
                 relay_pane_id = int(text) if text.isdigit() else None
+            if getattr(args, "with_chat", False):
+                from pane_control import build_spawn_argv
+
+                chat_cmd = [
+                    "cmd",
+                    "/c",
+                    str(scripts / "launch_chat_pane.cmd"),
+                    task_id,
+                    str(root),
+                    str(project_cwd),
+                    str(scripts / "mailbox.py"),
+                    str(getattr(args, "chat_poll_interval_s", 1.5)),
+                ]
+                rv = subprocess.run(
+                    build_spawn_argv(
+                        wezterm_exe=wez,
+                        workspace=workspace,
+                        cwd=project_cwd,
+                        cmd=chat_cmd,
+                        new_window=False,
+                    ),
+                    capture_output=True,
+                    text=True,
+                )
+                rv.check_returncode()
+                text = rv.stdout.strip()
+                chat_pane_id = int(text) if text.isdigit() else None
         set_pane(conn, task_id, "claude", pane_id=result["claude_pane_id"])
         set_pane(conn, task_id, "codex", pane_id=result["codex_pane_id"])
         if relay_pane_id is not None:
             set_pane(conn, task_id, "relay", pane_id=relay_pane_id)
+        if chat_pane_id is not None:
+            set_pane(conn, task_id, "chat", pane_id=chat_pane_id)
         from codex_session_discovery import find_codex_session_id
 
         sessions_dir = os.environ.get("AGENT_MAILBOX_CODEX_SESSIONS_DIR")
@@ -274,6 +309,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             "claude_pane_id": result["claude_pane_id"],
             "codex_pane_id": result["codex_pane_id"],
             "relay_pane_id": relay_pane_id,
+            "chat_pane_id": chat_pane_id,
             "codex_session_id": discovery["session_id"],
             "codex_discovery_status": discovery["status"],
         }
@@ -415,6 +451,88 @@ def cmd_show(args) -> int:
     finally:
         conn.close()
     return _emit(args, ok=True, data={"room": room, "messages": messages})
+
+
+def _connect_readonly(root: Path) -> sqlite3.Connection:
+    path = root / "agent-chat.sqlite"
+    if not path.is_file():
+        raise FileNotFoundError(f"mailbox DB not found: {path}")
+    uri = path.resolve().as_posix()
+    if os.name == "nt" and not uri.startswith("/"):
+        uri = "/" + uri
+    conn = sqlite3.connect(f"file:{uri}?mode=ro", uri=True, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
+def _message_body_from_row(root: Path, row: sqlite3.Row) -> str:
+    if row["body_text"] is not None:
+        return row["body_text"]
+    if row["body_path"]:
+        return (root / row["room_id"] / row["body_path"]).read_text(encoding="utf-8")
+    return ""
+
+
+def _ansi(text: str, code: str, *, enabled: bool) -> str:
+    return f"\033[{code}m{text}\033[0m" if enabled else text
+
+
+def _format_chat_message(root: Path, row: sqlite3.Row, *, color: bool) -> str:
+    author_code = {"claude": "34", "codex": "32", "user": "33"}.get(row["from_agent"], "2")
+    author = _ansi(row["from_agent"], author_code, enabled=color)
+    target = row["to_agent"] or "broadcast"
+    header = f"[{row['id']}] {row['created_at']} {author} -> {target} [{row['status']}] {row['summary'] or ''}".rstrip()
+    body = _message_body_from_row(root, row).rstrip()
+    if body:
+        indented = "\n".join(f"  {line}" if line else "" for line in body.splitlines())
+        return f"{header}\n\n{indented}\n"
+    return f"{header}\n"
+
+
+def _watch_chat_once(conn: sqlite3.Connection, root: Path, task_id: str, *, after_id: int, color: bool) -> tuple[int, str, str]:
+    room = conn.execute("SELECT status FROM rooms WHERE id=?", (task_id,)).fetchone()
+    if room is None:
+        raise KeyError(f"room {task_id} not found")
+    rows = conn.execute(
+        "SELECT * FROM messages WHERE room_id=? AND id>? ORDER BY id ASC",
+        (task_id, after_id),
+    ).fetchall()
+    chunks = []
+    seen = after_id
+    for row in rows:
+        chunks.append(_format_chat_message(root, row, color=color))
+        seen = max(seen, int(row["id"]))
+    return seen, room["status"], "\n".join(chunks)
+
+
+def cmd_watch_chat(args) -> int:
+    root = _root(args)
+    conn = _connect_readonly(root)
+    try:
+        task_id = _resolve(conn, args.task_id)
+        seen = max(0, args.from_message_id)
+        terminal_seen_at: float | None = None
+        color = bool(sys.stdout.isatty() and not args.no_color)
+        iteration = 0
+        while True:
+            seen, status, text = _watch_chat_once(conn, root, task_id, after_id=seen, color=color)
+            if text:
+                print(text, end="\n", flush=True)
+            if status in TERMINAL_ROOM_STATUSES:
+                if terminal_seen_at is None:
+                    terminal_seen_at = time.monotonic()
+                    print(f"[agent-mailbox] room terminal: {status}", flush=True)
+                elif time.monotonic() - terminal_seen_at >= args.terminal_grace_s:
+                    return 0
+            iteration += 1
+            if args.max_iters is not None and iteration >= args.max_iters:
+                return 0
+            time.sleep(args.poll_interval_s)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        conn.close()
 
 
 def cmd_status(args) -> int:
@@ -758,6 +876,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--exit-condition")
     p.add_argument("--max-rounds", type=int, default=30)
     p.add_argument("--max-iters", type=int)
+    p.add_argument("--with-chat", action="store_true")
+    p.add_argument("--chat-poll-interval-s", type=float, default=1.5)
     p.add_argument("--context")
     p.add_argument("--context-file", type=Path)
     p.set_defaults(func=cmd_start)
@@ -766,6 +886,9 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name)
         _common(p)
         p.add_argument("--task-id", required=True)
+        if name == "launch-tui":
+            p.add_argument("--with-chat", action="store_true")
+            p.add_argument("--chat-poll-interval-s", type=float, default=1.5)
         if name == "tui-relay":
             p.add_argument("--poll-interval-s", type=float, default=2.0)
             p.add_argument("--max-iters", type=int)
@@ -800,6 +923,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tail", type=int, default=5)
     p.add_argument("--body", action="store_true")
     p.set_defaults(func=cmd_show)
+
+    p = sub.add_parser("watch-chat")
+    _common(p)
+    p.add_argument("--task-id", required=True)
+    p.add_argument("--poll-interval-s", type=float, default=1.5)
+    p.add_argument("--from-message-id", type=int, default=0)
+    p.add_argument("--no-color", action="store_true")
+    p.add_argument("--max-iters", type=int)
+    p.add_argument("--terminal-grace-s", type=float, default=30.0)
+    p.set_defaults(func=cmd_watch_chat)
 
     p = sub.add_parser("status")
     _common(p)
