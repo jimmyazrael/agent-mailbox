@@ -56,10 +56,10 @@ def _kill_process_tree(proc: subprocess.Popen[str]) -> None:
         proc.kill()
 
 
-def _run_wezterm_list(list_argv: List[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
+def run_wezterm_cli(argv: List[str], *, timeout: float = 15.0) -> subprocess.CompletedProcess[str]:
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     proc = subprocess.Popen(
-        list_argv,
+        argv,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -78,11 +78,15 @@ def _run_wezterm_list(list_argv: List[str], *, timeout: float = 5.0) -> subproce
         except subprocess.TimeoutExpired:
             stdout, stderr = "", ""
         return subprocess.CompletedProcess(
-            list_argv,
+            argv,
             124,
             stdout or "",
-            (stderr or "") + f"wezterm list timed out after {timeout}s",
+            (stderr or "") + f"wezterm cli timed out after {timeout}s",
         )
+
+
+def _run_wezterm_list(list_argv: List[str], *, timeout: float = 5.0) -> subprocess.CompletedProcess[str]:
+    return run_wezterm_cli(list_argv, timeout=timeout)
 
 
 def ensure_mux_alive(wezterm_exe: Path, *, max_wait_s: float = 5.0) -> None:

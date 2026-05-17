@@ -1173,7 +1173,7 @@ def cmd_reap_stale_workspaces(args) -> int:
         conn.close()
 
     from pane_control import build_kill_pane_argv
-    from tui_launcher import find_wezterm
+    from tui_launcher import find_wezterm, run_wezterm_cli
 
     wez = find_wezterm()
     stale = _find_stale_workspaces(wezterm_exe=wez, rooms=rooms)
@@ -1181,14 +1181,9 @@ def cmd_reap_stale_workspaces(args) -> int:
     for entry in stale:
         if args.yes:
             for pane_id in entry["pane_ids"]:
-                kill = subprocess.run(
+                kill = run_wezterm_cli(
                     build_kill_pane_argv(wezterm_exe=wez, pane_id=pane_id),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
                     timeout=15,
-                    stdin=subprocess.DEVNULL,
                 )
                 kill.check_returncode()
                 killed.append(pane_id)
@@ -1529,16 +1524,14 @@ def cmd_stop(args) -> int:
     if args.close_panes:
         if not args.yes:
             return _emit(args, ok=False, error="--close-panes requires --yes")
-        from tui_launcher import find_wezterm
+        from tui_launcher import find_wezterm, run_wezterm_cli
         from pane_control import build_kill_pane_argv
 
         wez = find_wezterm()
         for pane_id in pane_ids:
-            subprocess.run(
+            run_wezterm_cli(
                 build_kill_pane_argv(wezterm_exe=wez, pane_id=pane_id),
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
+                timeout=15,
             )
     return _emit(args, ok=True, data={"task_id": task_id, "status": "stopped"})
 

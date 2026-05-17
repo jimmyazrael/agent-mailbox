@@ -1172,7 +1172,12 @@ def test_reap_stale_workspaces_dry_run_and_yes(monkeypatch, tmp_path):
             return subprocess.CompletedProcess(argv, 0, "", "")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
+    def fake_wezterm_cli(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
     monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr("tui_launcher.run_wezterm_cli", fake_wezterm_cli)
     import mailbox as mailbox_cli
 
     args = mailbox_cli.build_parser().parse_args(["reap-stale-workspaces", "--root", str(root), "--format", "json"])
