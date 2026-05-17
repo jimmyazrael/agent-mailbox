@@ -51,6 +51,18 @@ def test_parse_outbox_message_accepts_simple_frontmatter_without_yaml(tmp_path):
     assert len(msg.source_hash) == 64
 
 
+def test_parse_outbox_message_allows_literal_sentinel_mention_in_body(tmp_path):
+    path = tmp_path / "msg.md"
+    _write(
+        path,
+        "---\nfrom: claude\nto: codex\nstatus: continue\nsummary: review\n---\n\n"
+        "Mention `<!-- AGENT-MAILBOX:DONE -->` in prose without completing early.\n\n"
+        "<!-- AGENT-MAILBOX:DONE -->\n",
+    )
+    msg = parse_outbox_message(path)
+    assert "Mention `<!-- AGENT-MAILBOX:DONE -->`" in msg.body
+
+
 @pytest.mark.parametrize(
     ("text", "reason"),
     [

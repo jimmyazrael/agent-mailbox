@@ -13,6 +13,7 @@ SENTINEL = "<!-- AGENT-MAILBOX:DONE -->"
 VALID_AGENTS = {"claude", "codex"}
 VALID_STATUSES = {"continue", "blocked", "final", "error"}
 HEADER_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*)\s*:\s*(.*)$")
+SENTINEL_LINE_RE = re.compile(rf"(?m)^[ \t]*{re.escape(SENTINEL)}[ \t]*$")
 
 
 class OutboxError(ValueError):
@@ -72,12 +73,13 @@ def parse_outbox_message(path: Path) -> OutboxMessage:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     header, body_start = _parse_header(lines, path)
-    sentinel_count = text.count(SENTINEL)
-    if sentinel_count == 0:
+    sentinels = list(SENTINEL_LINE_RE.finditer(text))
+    if not sentinels:
         raise OutboxError("missing_done_sentinel", path)
-    if sentinel_count > 1:
+    if len(sentinels) > 1:
         raise OutboxError("multiple_done_sentinels", path)
-    before, after = text.split(SENTINEL, 1)
+    sentinel = sentinels[0]
+    before, after = text[: sentinel.start()], text[sentinel.end() :]
     if after.strip():
         raise OutboxError("trailing_content_after_sentinel", path)
     body_text = "\n".join(before.splitlines()[body_start:]).strip()
