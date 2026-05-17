@@ -324,16 +324,19 @@ def test_launch_tui_fake_panes(monkeypatch, tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
     task_id = json.loads(init.stdout)["data"]["task_id"]
-    env = dict(**__import__("os").environ, AGENT_MAILBOX_FAKE_PANE_IDS="11,12,13,14", AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"))
+    env = dict(**__import__("os").environ, AGENT_MAILBOX_FAKE_PANE_IDS="11,12,13,14,15", AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"))
     rv = _run("launch-tui", "--root", str(root), "--task-id", task_id, "--format", "json", env=env)
     assert rv.returncode == 0, rv.stderr
     data = json.loads(rv.stdout)["data"]
     assert data["claude_pane_id"] == 11
     assert data["chat_pane_id"] == 14
+    assert data["control_pane_id"] == 15
     conn = connect_db(root)
     assert conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='relay'", (task_id,)).fetchone() is None
     chat = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='chat'", (task_id,)).fetchone()
     assert chat["pane_id"] == 14
+    control = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='control'", (task_id,)).fetchone()
+    assert control["pane_id"] == 15
     relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
     assert relay["paused"] == 0
     assert relay["pause_reason"] is None
@@ -345,7 +348,7 @@ def test_launch_tui_no_chat_disables_chat_fake_pane(tmp_path):
     task_id = json.loads(init.stdout)["data"]["task_id"]
     env = dict(
         **__import__("os").environ,
-        AGENT_MAILBOX_FAKE_PANE_IDS="11,12,13,14",
+        AGENT_MAILBOX_FAKE_PANE_IDS="11,12,13,14,15",
         AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"),
     )
     rv = _run("launch-tui", "--root", str(root), "--task-id", task_id, "--no-chat", "--format", "json", env=env)
@@ -355,6 +358,26 @@ def test_launch_tui_no_chat_disables_chat_fake_pane(tmp_path):
     conn = connect_db(root)
     chat = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='chat'", (task_id,)).fetchone()
     assert chat is None
+    control = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='control'", (task_id,)).fetchone()
+    assert control["pane_id"] == 15
+
+
+def test_launch_tui_no_control_panel_disables_control_fake_pane(tmp_path):
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    env = dict(
+        **__import__("os").environ,
+        AGENT_MAILBOX_FAKE_PANE_IDS="11,12,13,14,15",
+        AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"),
+    )
+    rv = _run("launch-tui", "--root", str(root), "--task-id", task_id, "--no-control-panel", "--format", "json", env=env)
+    assert rv.returncode == 0, rv.stderr
+    data = json.loads(rv.stdout)["data"]
+    assert data["control_pane_id"] is None
+    conn = connect_db(root)
+    control = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='control'", (task_id,)).fetchone()
+    assert control is None
 
 
 def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_path):
@@ -374,7 +397,7 @@ def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_p
 
     import mailbox as mailbox_cli
 
-    args = mailbox_cli.build_parser().parse_args(["launch-tui", "--root", str(root), "--task-id", task_id, "--no-chat", "--format", "json"])
+    args = mailbox_cli.build_parser().parse_args(["launch-tui", "--root", str(root), "--task-id", task_id, "--no-chat", "--no-control-panel", "--format", "json"])
     assert mailbox_cli.cmd_launch_tui(args) == 0
     codex_cmd = calls[0]["codex_cmd"]
     assert codex_cmd[-1] == ""
@@ -417,13 +440,15 @@ def test_launch_tui_chat_uses_existing_window_id(monkeypatch, tmp_path):
     conn = connect_db(root)
     chat = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='chat'", (task_id,)).fetchone()
     assert chat["pane_id"] == 44
+    control = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='control'", (task_id,)).fetchone()
+    assert control["pane_id"] == 44
 
 
 def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
     root = tmp_path / "mb"
     env = dict(
         **__import__("os").environ,
-        AGENT_MAILBOX_FAKE_PANE_IDS="21,22,23,24",
+        AGENT_MAILBOX_FAKE_PANE_IDS="21,22,23,24,25",
         AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"),
     )
     rv = _run(
@@ -451,13 +476,15 @@ def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):
     assert relay["pane_id"] == 23
     chat = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='chat'", (task_id,)).fetchone()
     assert chat["pane_id"] == 24
+    control = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='control'", (task_id,)).fetchone()
+    assert control["pane_id"] == 25
 
 
 def test_start_no_chat_disables_chat_fake_pane(tmp_path):
     root = tmp_path / "mb"
     env = dict(
         **__import__("os").environ,
-        AGENT_MAILBOX_FAKE_PANE_IDS="21,22,23,24",
+        AGENT_MAILBOX_FAKE_PANE_IDS="21,22,23,24,25",
         AGENT_MAILBOX_CODEX_SESSIONS_DIR=str(tmp_path / "sessions"),
     )
     rv = _run(
@@ -471,6 +498,7 @@ def test_start_no_chat_disables_chat_fake_pane(tmp_path):
         "--project-cwd",
         str(tmp_path),
         "--no-chat",
+        "--no-control-panel",
         "--format",
         "json",
         env=env,
@@ -481,6 +509,7 @@ def test_start_no_chat_disables_chat_fake_pane(tmp_path):
     panes = {row["pane_role"]: row["pane_id"] for row in conn.execute("SELECT * FROM panes WHERE room_id=?", (task_id,))}
     assert panes["relay"] == 23
     assert "chat" not in panes
+    assert "control" not in panes
 
 
 def test_watch_chat_emits_existing_messages_without_mutating_state(tmp_path):
@@ -549,6 +578,171 @@ def test_watch_chat_from_message_id_emits_only_newer_messages(tmp_path):
     assert "new body" in rv.stdout
 
 
+def test_control_panel_parser_defaults_and_once_status(tmp_path):
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(
+        [
+            "start",
+            "--root",
+            str(tmp_path / "mb"),
+            "--prefix",
+            "t",
+            "--goal",
+            "g",
+            "--project-cwd",
+            str(tmp_path),
+        ]
+    )
+    assert args.with_control_panel is True
+    no_panel = mailbox_cli.build_parser().parse_args(
+        [
+            "launch-tui",
+            "--root",
+            str(tmp_path / "mb"),
+            "--task-id",
+            "t1",
+            "--no-control-panel",
+        ]
+    )
+    assert no_panel.with_control_panel is False
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    rv = _run("control-panel", "--root", str(root), "--task-id", task_id, "--once")
+    assert rv.returncode == 0, rv.stderr
+    assert "Agent Mailbox Control Panel" in rv.stdout
+    assert f"Task: {task_id}" in rv.stdout
+
+
+def test_control_panel_actions_use_mailbox_subprocess(monkeypatch, tmp_path):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    args = mailbox_cli.build_parser().parse_args(["control-panel", "--root", str(root), "--task-id", "t1", "--commands", "q"])
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, '{"ok": true}\n', "")
+
+    monkeypatch.setattr(mailbox_cli.subprocess, "run", fake_run)
+    assert mailbox_cli._panel_pause(args, reason="test_reason")
+    assert mailbox_cli._panel_resume(args)
+    assert mailbox_cli._panel_inject(args, "hello")
+    assert mailbox_cli._panel_stop(args)
+    assert mailbox_cli._panel_rediscover_codex(args)
+    assert mailbox_cli._panel_restart_agent(args, "claude")
+
+    joined = [" ".join(call) for call in calls]
+    assert any("pause" in call and "--reason test_reason" in call for call in joined)
+    assert any("resume" in call for call in joined)
+    assert any("inject" in call and "--content hello" in call for call in joined)
+    assert any("stop" in call for call in joined)
+    assert any("repair" in call and "--rediscover-codex" in call for call in joined)
+    assert any("repair" in call and "--restart-agent claude" in call for call in joined)
+    assert not any("--close-panes" in call for call in joined)
+
+
+def test_control_panel_bounce_claude_pauses_restarts_and_resumes(monkeypatch, tmp_path):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    args = mailbox_cli.build_parser().parse_args(["control-panel", "--root", str(root), "--task-id", task_id])
+    calls = []
+    answers = iter(["", "y", ""])
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr(mailbox_cli, "_panel_cli", lambda _args, *subargs: calls.append(subargs) or True)
+
+    mailbox_cli._panel_bounce_agent(args, "claude")
+    assert calls == [
+        ("pause", "--reason", "control_panel_bounce_claude"),
+        ("repair", "--restart-agent", "claude"),
+        ("resume",),
+    ]
+
+
+def test_control_panel_codex_bounce_without_session_offers_rediscovery(monkeypatch, tmp_path):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    args = mailbox_cli.build_parser().parse_args(["control-panel", "--root", str(root), "--task-id", task_id])
+    calls = []
+    states = [
+        {
+            "task_id": task_id,
+            "room": {"status": "waiting", "workspace": "w"},
+            "relay": {},
+            "sessions": {"codex": {"session_id": None, "discovery_status": "pending"}},
+            "panes": {},
+            "latest": None,
+        },
+        {
+            "task_id": task_id,
+            "room": {"status": "waiting", "workspace": "w"},
+            "relay": {},
+            "sessions": {"codex": {"session_id": "codex-known", "discovery_status": "discovered"}},
+            "panes": {},
+            "latest": None,
+        },
+    ]
+    answers = iter(["y", "", "y", ""])
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr(mailbox_cli, "_read_panel_state", lambda _root, _task_id: states.pop(0))
+    monkeypatch.setattr(mailbox_cli, "_panel_cli", lambda _args, *subargs: calls.append(subargs) or True)
+
+    mailbox_cli._panel_bounce_agent(args, "codex")
+    assert calls == [
+        ("repair", "--rediscover-codex"),
+        ("pause", "--reason", "control_panel_bounce_codex"),
+        ("repair", "--restart-agent", "codex"),
+        ("resume",),
+    ]
+
+
+def test_control_panel_rebind_validates_live_workspace_pane(monkeypatch, tmp_path):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    args = mailbox_cli.build_parser().parse_args(["control-panel", "--root", str(root), "--task-id", task_id])
+    calls = []
+    answers = iter(["claude", "777", "y"])
+
+    monkeypatch.setattr(mailbox_cli, "_live_workspace_panes", lambda _root, _task_id: [{"pane_id": 777, "title": "Claude"}])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr(mailbox_cli, "_panel_cli", lambda _args, *subargs: calls.append(subargs) or True)
+
+    mailbox_cli._panel_rebind_pane_interactive(args)
+    assert calls == [("repair", "--rebind-pane", "--agent", "claude", "--pane-id", "777")]
+
+
+def test_control_panel_rebind_refuses_non_live_pane(monkeypatch, tmp_path):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    args = mailbox_cli.build_parser().parse_args(["control-panel", "--root", str(root), "--task-id", task_id])
+    calls = []
+    answers = iter(["claude", "999"])
+
+    monkeypatch.setattr(mailbox_cli, "_live_workspace_panes", lambda _root, _task_id: [{"pane_id": 777, "title": "Claude"}])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr(mailbox_cli, "_panel_cli", lambda _args, *subargs: calls.append(subargs) or True)
+
+    mailbox_cli._panel_rebind_pane_interactive(args)
+    assert calls == []
+
+
 def test_watch_chat_terminal_room_exits_after_grace(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
@@ -575,6 +769,15 @@ def test_launch_chat_pane_cmd_shape():
     assert "watch-chat --root" in text
     assert "AGENT_MAILBOX_TASK_ID" in text
     assert "AGENT_MAILBOX_ROOT" in text
+    assert "cmd /k" in text
+
+
+def test_launch_control_panel_cmd_shape():
+    text = (SKILL_ROOT / "scripts" / "launch_control_panel.cmd").read_text(encoding="utf-8")
+    assert "control-panel --root" in text
+    assert "AGENT_MAILBOX_TASK_ID" in text
+    assert "AGENT_MAILBOX_ROOT" in text
+    assert "role=control" in text
     assert "cmd /k" in text
 
 

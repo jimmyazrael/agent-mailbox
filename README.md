@@ -12,8 +12,21 @@ By default, `mailbox.py start` opens a WezTerm workspace with:
 - Codex pane
 - relay pane that triggers the active agent
 - read-only chat transcript pane
+- control panel tab for pause/resume/inject/stop/repair actions
 
-The chat transcript is default-on. Use `--no-chat` only when you explicitly do not want it.
+The chat transcript and control panel are default-on. Use `--no-chat` or `--no-control-panel` only when you explicitly do not want them.
+
+## Requirements
+
+Agent Mailbox has a hard runtime dependency on [WezTerm](https://wezterm.org/), because it uses WezTerm panes, tabs, workspaces, and `wezterm cli` to keep Claude Code, Codex, the relay, and the chat transcript visible in one place.
+
+Install WezTerm from the official download page:
+
+```text
+https://wezterm.org/installation.html
+```
+
+After installation, `wezterm` must be available on `PATH`, or installed in one of WezTerm's standard Windows locations.
 
 ## Day-To-Day Invocation
 
@@ -62,6 +75,7 @@ If any of these are unclear and risky to assume, the orchestrator should ask the
 python scripts\mailbox.py status --root <root> --task-id <id>
 python scripts\mailbox.py show --root <root> --task-id <id> --tail 5 --body
 python scripts\mailbox.py watch-chat --root <root> --task-id <id>
+python scripts\mailbox.py control-panel --root <root> --task-id <id>
 python scripts\mailbox.py inject --root <root> --task-id <id> --target next --content "New guidance"
 python scripts\mailbox.py pause --root <root> --task-id <id>
 python scripts\mailbox.py resume --root <root> --task-id <id>
@@ -80,6 +94,14 @@ python scripts\mailbox.py resume --root <root> --task-id <id>
 The mailbox stores Claude session metadata, discovered Codex session metadata, WezTerm pane ids, and the immutable workspace name. It does not automatically use `codex resume --last`; that fallback remains manual.
 
 ## Accident Playbook
+
+Prefer the default control panel tab for routine accident handling. It exposes:
+
+```text
+r refresh | p pause | c resume | i inject | a agent actions/bounce | d rediscover Codex | s stop | q quit panel
+```
+
+Use the CLI commands below if the panel is closed or unavailable.
 
 Start with status:
 
@@ -143,7 +165,7 @@ If you need a hard stop:
 python scripts\mailbox.py stop --root <root> --task-id <id>
 ```
 
-Add `--close-panes --yes` only when you also want the WezTerm panes closed.
+Add `--close-panes --yes` only when you also want the WezTerm panes closed. The control panel intentionally does not expose close-panes as a single-key action.
 
 ## Validation
 

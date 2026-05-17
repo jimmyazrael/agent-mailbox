@@ -155,12 +155,15 @@ Rule: a non-terminal message must not end with agreement only. It must either na
 
 Use native Claude Code and Codex TUIs in WezTerm for progress, thinking, edits, approvals, interrupts, and steering.
 
+Mailbox launches a read-only chat transcript tab and a control panel tab by default. Keep the control panel available unless the user explicitly asks for `--no-control-panel`; it is the normal place for pause, resume, inject, stop, rediscover, and bounce-agent actions.
+
 Useful control commands:
 
 ```powershell
 python <skill>\scripts\mailbox.py status --root <root> --task-id <id>
 python <skill>\scripts\mailbox.py show --root <root> --task-id <id> --tail 5 --body
 python <skill>\scripts\mailbox.py watch-chat --root <root> --task-id <id>
+python <skill>\scripts\mailbox.py control-panel --root <root> --task-id <id>
 python <skill>\scripts\mailbox.py list --root <root> --active-only
 python <skill>\scripts\mailbox.py inject --root <root> --task-id <id> --target next --content "New guidance"
 python <skill>\scripts\mailbox.py pause --root <root> --task-id <id>
@@ -185,7 +188,8 @@ The repair command intentionally does not support `--use-last-codex-session` eve
 
 When the user reports that an agent crashed, got stuck, hit 403/auth/rate-limit errors, needs approval, or is going in the wrong direction:
 
-- Start with `mailbox.py status --root <root> --task-id <id>`.
+- Prefer the control panel tab for `p` pause, `i` inject, `c` resume, `a` agent actions/bounce, `d` rediscover Codex, and `s` stop.
+- If the panel is unavailable, start with `mailbox.py status --root <root> --task-id <id>`.
 - Use `pause` before manual inspection or credential/approval fixes.
 - Use `inject` to provide corrective guidance or tell the active agent to summarize what it is waiting on.
 - Use `resume` after panes, credentials, or approvals are fixed.

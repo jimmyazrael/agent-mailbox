@@ -105,8 +105,54 @@ def _chat_flags(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--chat-poll-interval-s", type=float, default=1.5)
 
 
+def _control_flags(subparser: argparse.ArgumentParser) -> None:
+    group = subparser.add_mutually_exclusive_group()
+    group.add_argument("--with-control-panel", dest="with_control_panel", action="store_true", help="open the control panel view (default)")
+    group.add_argument("--no-control-panel", dest="with_control_panel", action="store_false", help="do not open the control panel view")
+    subparser.set_defaults(with_control_panel=True)
+
+
 def _resolve(conn, task_id: str) -> str:
     return resolve_task_id(conn, task_id)
+
+
+def _spawn_workspace_tab(
+    *,
+    wezterm_exe: Path,
+    workspace: str,
+    cwd: Path,
+    cmd: list[str],
+) -> int | None:
+    from pane_control import build_list_argv, build_spawn_argv
+    from tui_launcher import lookup_pane, parse_wezterm_list
+
+    list_rv = subprocess.run(
+        build_list_argv(wezterm_exe=wezterm_exe),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    list_rv.check_returncode()
+    workspace_panes = lookup_pane(parse_wezterm_list(list_rv.stdout), workspace=workspace)
+    if not workspace_panes:
+        raise RuntimeError(f"workspace not found for tab spawn: {workspace}")
+    window_id = int(workspace_panes[0]["window_id"])
+    rv = subprocess.run(
+        build_spawn_argv(
+            wezterm_exe=wezterm_exe,
+            workspace=workspace,
+            cwd=cwd,
+            cmd=cmd,
+            new_window=False,
+            window_id=window_id,
+        ),
+        capture_output=True,
+        text=True,
+    )
+    rv.check_returncode()
+    text = rv.stdout.strip()
+    return int(text) if text.isdigit() else None
 
 
 def _init_task(args, root: Path) -> dict[str, Any]:
@@ -230,6 +276,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             result = {"workspace": workspace, "claude_pane_id": parts[0], "codex_pane_id": parts[1], "spawned_at": utc_now()}
             relay_pane_id = parts[2] if launch_relay and len(parts) > 2 else None
             chat_pane_id = parts[3] if getattr(args, "with_chat", False) and len(parts) > 3 else None
+            control_pane_id = parts[4] if getattr(args, "with_control_panel", False) and len(parts) > 4 else None
         else:
             from tui_launcher import ensure_mux_alive, find_wezterm, launch_workspace
 
@@ -244,6 +291,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             )
             relay_pane_id = None
             chat_pane_id = None
+            control_pane_id = None
             if launch_relay:
                 from pane_control import build_split_argv
 
@@ -274,9 +322,6 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                 text = rv.stdout.strip()
                 relay_pane_id = int(text) if text.isdigit() else None
             if getattr(args, "with_chat", False):
-                from pane_control import build_list_argv, build_spawn_argv
-                from tui_launcher import lookup_pane, parse_wezterm_list
-
                 chat_cmd = [
                     "cmd",
                     "/c",
@@ -287,39 +332,26 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                     str(scripts / "mailbox.py"),
                     str(getattr(args, "chat_poll_interval_s", 1.5)),
                 ]
-                list_rv = subprocess.run(
-                    build_list_argv(wezterm_exe=wez),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                )
-                list_rv.check_returncode()
-                workspace_panes = lookup_pane(parse_wezterm_list(list_rv.stdout), workspace=workspace)
-                if not workspace_panes:
-                    raise RuntimeError(f"workspace not found for chat pane: {workspace}")
-                window_id = int(workspace_panes[0]["window_id"])
-                rv = subprocess.run(
-                    build_spawn_argv(
-                        wezterm_exe=wez,
-                        workspace=workspace,
-                        cwd=project_cwd,
-                        cmd=chat_cmd,
-                        new_window=False,
-                        window_id=window_id,
-                    ),
-                    capture_output=True,
-                    text=True,
-                )
-                rv.check_returncode()
-                text = rv.stdout.strip()
-                chat_pane_id = int(text) if text.isdigit() else None
+                chat_pane_id = _spawn_workspace_tab(wezterm_exe=wez, workspace=workspace, cwd=project_cwd, cmd=chat_cmd)
+            if getattr(args, "with_control_panel", False):
+                control_cmd = [
+                    "cmd",
+                    "/c",
+                    str(scripts / "launch_control_panel.cmd"),
+                    task_id,
+                    str(root),
+                    str(project_cwd),
+                    str(scripts / "mailbox.py"),
+                ]
+                control_pane_id = _spawn_workspace_tab(wezterm_exe=wez, workspace=workspace, cwd=project_cwd, cmd=control_cmd)
         set_pane(conn, task_id, "claude", pane_id=result["claude_pane_id"])
         set_pane(conn, task_id, "codex", pane_id=result["codex_pane_id"])
         if relay_pane_id is not None:
             set_pane(conn, task_id, "relay", pane_id=relay_pane_id)
         if chat_pane_id is not None:
             set_pane(conn, task_id, "chat", pane_id=chat_pane_id)
+        if control_pane_id is not None:
+            set_pane(conn, task_id, "control", pane_id=control_pane_id)
         from codex_session_discovery import find_codex_session_id
 
         sessions_dir = os.environ.get("AGENT_MAILBOX_CODEX_SESSIONS_DIR")
@@ -343,6 +375,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             "codex_pane_id": result["codex_pane_id"],
             "relay_pane_id": relay_pane_id,
             "chat_pane_id": chat_pane_id,
+            "control_pane_id": control_pane_id,
             "codex_session_id": discovery["session_id"],
             "codex_discovery_status": discovery["status"],
         }
@@ -566,6 +599,307 @@ def cmd_watch_chat(args) -> int:
         return 0
     finally:
         conn.close()
+
+
+def _run_mailbox_cli(args, *subargs: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(Path(__file__).resolve()), *subargs, "--root", str(_root(args)), "--task-id", args.task_id, "--format", "json"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+    )
+
+
+def _read_panel_state(root: Path, task_id: str) -> dict[str, Any]:
+    conn = _connect_readonly(root)
+    try:
+        resolved = _resolve(conn, task_id)
+        room = dict(conn.execute("SELECT * FROM rooms WHERE id=?", (resolved,)).fetchone())
+        relay = conn.execute("SELECT * FROM tui_relay_state WHERE room_id=?", (resolved,)).fetchone()
+        sessions = {
+            row["agent"]: dict(row)
+            for row in conn.execute("SELECT * FROM agent_sessions WHERE room_id=?", (resolved,)).fetchall()
+        }
+        panes = {row["pane_role"]: row["pane_id"] for row in conn.execute("SELECT * FROM panes WHERE room_id=?", (resolved,)).fetchall()}
+        latest = conn.execute("SELECT * FROM messages WHERE room_id=? ORDER BY id DESC LIMIT 1", (resolved,)).fetchone()
+        return {
+            "task_id": resolved,
+            "room": room,
+            "relay": dict(relay) if relay else {},
+            "sessions": sessions,
+            "panes": panes,
+            "latest": dict(latest) if latest else None,
+        }
+    finally:
+        conn.close()
+
+
+def _format_panel_status(state: dict[str, Any]) -> str:
+    room = state["room"]
+    relay = state["relay"]
+    latest = state["latest"] or {}
+    sessions = state["sessions"]
+    panes = state["panes"]
+    lines = [
+        "Agent Mailbox Control Panel",
+        "",
+        f"Task: {state['task_id']}",
+        f"Status: {room['status']}    Turn: {room['turn']}    Round: {room['round']}    Last message: {room['last_message_id']}",
+        f"Paused: {bool(relay.get('paused', 0))}    Reason: {relay.get('pause_reason') or ''}",
+        f"Panes: {', '.join(f'{k}={v}' for k, v in sorted(panes.items())) or '(none)'}",
+        f"Codex discovery: {sessions.get('codex', {}).get('discovery_status')}    Codex session: {sessions.get('codex', {}).get('session_id') or '<none>'}",
+        "",
+        f"Latest: [{latest.get('id', '-')}] {latest.get('from_agent', '-')} -> {latest.get('to_agent') or '-'} [{latest.get('status', '-')}] {latest.get('summary') or ''}",
+        "",
+        "Commands: r refresh | p pause | c resume | i inject | a agent actions | d rediscover Codex | s stop | q quit | ? help",
+    ]
+    if room["status"] in TERMINAL_ROOM_STATUSES:
+        lines.append("Room is terminal; mutation commands are disabled.")
+    return "\n".join(lines)
+
+
+def _panel_print_status(args) -> None:
+    print(_format_panel_status(_read_panel_state(_root(args), args.task_id)))
+
+
+def _panel_cli(args, *subargs: str) -> bool:
+    rv = _run_mailbox_cli(args, *subargs)
+    text = (rv.stdout or rv.stderr or "").strip()
+    if text:
+        print(text)
+    return rv.returncode == 0
+
+
+def _panel_pause(args, reason: str = "control_panel") -> bool:
+    return _panel_cli(args, "pause", "--reason", reason)
+
+
+def _panel_resume(args) -> bool:
+    return _panel_cli(args, "resume")
+
+
+def _panel_inject(args, content: str) -> bool:
+    return _panel_cli(args, "inject", "--target", "next", "--summary", "control panel injection", "--content", content)
+
+
+def _panel_stop(args) -> bool:
+    return _panel_cli(args, "stop")
+
+
+def _panel_rediscover_codex(args) -> bool:
+    return _panel_cli(args, "repair", "--rediscover-codex")
+
+
+def _panel_restart_agent(args, agent: str) -> bool:
+    return _panel_cli(args, "repair", "--restart-agent", agent)
+
+
+def _panel_rebind_pane(args, agent: str, pane_id: str) -> bool:
+    if agent not in {"claude", "codex", "relay"}:
+        print("Panel rebind supports claude, codex, and relay only. Use the CLI for other pane roles.")
+        return False
+    return _panel_cli(args, "repair", "--rebind-pane", "--agent", agent, "--pane-id", pane_id)
+
+
+def _live_workspace_panes(root: Path, task_id: str) -> list[dict[str, Any]]:
+    state = _read_panel_state(root, task_id)
+    workspace = state["room"]["workspace"]
+    from pane_control import build_list_argv
+    from tui_launcher import find_wezterm, lookup_pane, parse_wezterm_list
+
+    rv = subprocess.run(
+        build_list_argv(wezterm_exe=find_wezterm()),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=15,
+    )
+    rv.check_returncode()
+    return lookup_pane(parse_wezterm_list(rv.stdout), workspace=workspace)
+
+
+def _panel_rebind_pane_interactive(args) -> None:
+    try:
+        panes = _live_workspace_panes(_root(args), args.task_id)
+    except Exception as exc:
+        print(f"Unable to list live WezTerm panes: {exc}")
+        return
+    if not panes:
+        print("No live panes found in this task workspace.")
+        return
+    live_ids = {int(pane["pane_id"]) for pane in panes}
+    print("Live pane candidates:")
+    for pane in sorted(panes, key=lambda p: int(p["pane_id"])):
+        title = pane.get("title") or pane.get("tty_name") or ""
+        print(f"  {pane['pane_id']}  {title}")
+    agent = input("agent (claude/codex/relay)> ").strip().lower()
+    pane_id = input("pane id> ").strip()
+    if agent not in {"claude", "codex", "relay"}:
+        print("Invalid agent. Choose claude, codex, or relay.")
+        return
+    if not pane_id.isdigit() or int(pane_id) not in live_ids:
+        print("Invalid pane id. Rebind refused because the pane is not live in this workspace.")
+        return
+    if _prompt_yes_no(f"Rebind {agent} to live pane {pane_id}?", default=False):
+        _panel_rebind_pane(args, agent, pane_id)
+
+
+def _prompt_yes_no(prompt: str, *, default: bool) -> bool:
+    suffix = "[Y/n]" if default else "[y/N]"
+    answer = input(f"{prompt} {suffix}: ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def _panel_bounce_agent(args, agent: str) -> None:
+    state = _read_panel_state(_root(args), args.task_id)
+    session_id = state["sessions"].get(agent, {}).get("session_id")
+    discovery = state["sessions"].get(agent, {}).get("discovery_status")
+    print(f"[{agent.capitalize()} bounce]")
+    print(f"{agent} session_id: {session_id or '<none>'} ({discovery or 'n/a'})")
+    if agent == "codex" and not session_id:
+        print("Codex session id is missing; restart cannot run until rediscovery succeeds.")
+        if not _prompt_yes_no("Run Codex rediscovery now?", default=False):
+            return
+        if not _panel_rediscover_codex(args):
+            print("Rediscovery failed.")
+            return
+        state = _read_panel_state(_root(args), args.task_id)
+        session_id = state["sessions"].get("codex", {}).get("session_id")
+        if not session_id:
+            print("Codex session is still missing. Codex may need to post once with the task marker.")
+            return
+        print(f"Codex discovered: {session_id}")
+    if _prompt_yes_no("Pause relay before bounce?", default=True):
+        _panel_pause(args, reason=f"control_panel_bounce_{agent}")
+    if not _prompt_yes_no("Proceed with bounce?", default=False):
+        print("Bounce cancelled.")
+        return
+    if _panel_restart_agent(args, agent) and _prompt_yes_no("Resume relay after?", default=True):
+        _panel_resume(args)
+
+
+def _panel_rediscover_then_bounce_codex(args) -> None:
+    print("[Codex rediscover + bounce]")
+    if _prompt_yes_no("Pause relay before rediscovery?", default=True):
+        _panel_pause(args, reason="control_panel_rediscover_codex")
+    if not _prompt_yes_no("Run rediscovery?", default=False):
+        print("Rediscovery cancelled; relay remains paused.")
+        return
+    if not _panel_rediscover_codex(args):
+        print("Rediscovery failed; relay remains paused.")
+        return
+    state = _read_panel_state(_root(args), args.task_id)
+    session_id = state["sessions"].get("codex", {}).get("session_id")
+    if not session_id:
+        print("Codex session is still missing. Codex may need to post once with the task marker, or you may need to rebind/resume manually.")
+        return
+    print(f"Codex discovered: {session_id}")
+    if _prompt_yes_no("Proceed with bounce?", default=False) and _panel_restart_agent(args, "codex"):
+        if _prompt_yes_no("Resume relay after?", default=True):
+            _panel_resume(args)
+
+
+def _panel_agent_menu(args) -> None:
+    while True:
+        print(
+            "\nAgent actions:\n"
+            "1 bounce Claude in existing pane\n"
+            "2 bounce Codex in existing pane\n"
+            "3 rediscover Codex, then bounce Codex if discovered\n"
+            "4 run resume to recreate missing panes\n"
+            "5 rebind pane id manually\n"
+            "q back"
+        )
+        choice = input("agent action> ").strip().lower()
+        if choice == "1":
+            _panel_bounce_agent(args, "claude")
+        elif choice == "2":
+            _panel_bounce_agent(args, "codex")
+        elif choice == "3":
+            _panel_rediscover_then_bounce_codex(args)
+        elif choice == "4":
+            _panel_resume(args)
+        elif choice == "5":
+            _panel_rebind_pane_interactive(args)
+        elif choice == "q":
+            return
+        else:
+            print("Unknown action.")
+
+
+def _panel_help() -> None:
+    print(
+        "\nCommands:\n"
+        "r  refresh status\n"
+        "p  pause relay\n"
+        "c  continue / resume\n"
+        "i  inject free-form guidance\n"
+        "a  agent actions / bounce submenu\n"
+        "d  rediscover Codex session\n"
+        "s  stop task, keep panes open\n"
+        "q  quit control panel only\n"
+        "?  help\n"
+    )
+
+
+def _panel_handle_command(args, command: str) -> bool:
+    command = command.strip().lower()
+    state = _read_panel_state(_root(args), args.task_id)
+    terminal = state["room"]["status"] in TERMINAL_ROOM_STATUSES
+    if command == "q":
+        return False
+    if command in {"r", ""}:
+        _panel_print_status(args)
+    elif command == "?":
+        _panel_help()
+    elif terminal:
+        print("Room is terminal; mutation commands are disabled.")
+    elif command == "p":
+        _panel_pause(args)
+    elif command == "c":
+        _panel_resume(args)
+    elif command == "i":
+        content = input("Inject guidance> ").strip()
+        if content and _prompt_yes_no("Send injection?", default=False):
+            _panel_inject(args, content)
+    elif command == "a":
+        _panel_agent_menu(args)
+    elif command == "d":
+        _panel_rediscover_codex(args)
+    elif command == "s":
+        if _prompt_yes_no("Stop task and keep panes open?", default=False):
+            _panel_stop(args)
+    else:
+        print("Unknown command. Press ? for help.")
+    return True
+
+
+def cmd_control_panel(args) -> int:
+    if args.once:
+        _panel_print_status(args)
+        return 0
+    iters = 0
+    _panel_print_status(args)
+    while True:
+        if args.max_iters is not None and iters >= args.max_iters:
+            return 0
+        if args.commands:
+            if iters >= len(args.commands):
+                return 0
+            command = args.commands[iters]
+        else:
+            command = input("control> ")
+        iters += 1
+        try:
+            if not _panel_handle_command(args, command):
+                return 0
+        except Exception as exc:
+            print(f"ERROR: {exc}")
 
 
 def cmd_status(args) -> int:
@@ -910,6 +1244,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-rounds", type=int, default=30)
     p.add_argument("--max-iters", type=int)
     _chat_flags(p)
+    _control_flags(p)
     p.add_argument("--context")
     p.add_argument("--context-file", type=Path)
     p.set_defaults(func=cmd_start)
@@ -920,6 +1255,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--task-id", required=True)
         if name == "launch-tui":
             _chat_flags(p)
+            _control_flags(p)
         if name == "tui-relay":
             p.add_argument("--poll-interval-s", type=float, default=2.0)
             p.add_argument("--max-iters", type=int)
@@ -964,6 +1300,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-iters", type=int)
     p.add_argument("--terminal-grace-s", type=float, default=30.0)
     p.set_defaults(func=cmd_watch_chat)
+
+    p = sub.add_parser("control-panel")
+    _common(p)
+    p.add_argument("--task-id", required=True)
+    p.add_argument("--once", action="store_true")
+    p.add_argument("--max-iters", type=int)
+    p.add_argument("--commands", nargs="*")
+    p.set_defaults(func=cmd_control_panel)
 
     p = sub.add_parser("status")
     _common(p)
