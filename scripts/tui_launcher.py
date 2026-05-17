@@ -194,13 +194,14 @@ def attach_workspace_gui(wezterm_exe: Path, workspace: str, cwd: Path) -> None:
     """
     creationflags = 0
     if os.name == "nt":
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
     subprocess.Popen(
         # On this Windows WezTerm build, `start --attach` requires an
         # explicit domain. `unix` is the local mux domain name even on
         # Windows for the default local multiplexer.
         build_start_argv(wezterm_exe=wezterm_exe, workspace=workspace, cwd=cwd, attach=True, domain="unix"),
         creationflags=creationflags,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         close_fds=True,
