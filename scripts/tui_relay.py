@@ -25,7 +25,7 @@ def trigger_text(*, agent: str, peer: str, task_id: str, root: Path, first_turn:
         f"Discovery marker: AGENT_MAILBOX_TASK_ID={task_id}. "
         f"Read the latest mailbox state with: python \"{mailbox_py}\" show --root \"{root}\" --task-id \"{task_id}\" --tail 1 --body --format json. "
         f"Then post via: python \"{mailbox_py}\" post --root \"{root}\" --task-id \"{task_id}\" --from {agent} --to {peer} --status continue --summary \"...\" --body \"...\". "
-        f"Every non-terminal post must include protocol header lines: Mode, Coordinator, Owner, Reviewer, Next action, Done when; use Blocked on when blocked. "
+        f"Non-terminal posts need Mode plus Next action or Blocked on. "
         f"If you already responded to that message, do nothing.\r"
     )
 
@@ -47,11 +47,12 @@ def send_trigger(*, wezterm_exe: Path, pane_id: int, agent: str, peer: str, task
     )
     if rv_text.returncode != 0:
         return False
+    time.sleep(0.5)
     rv_enter = subprocess.run(
         build_send_text_argv(
             wezterm_exe=wezterm_exe,
             pane_id=pane_id,
-            text="\r",
+            text="\r\n",
             no_paste=True,
         ),
         capture_output=True,
