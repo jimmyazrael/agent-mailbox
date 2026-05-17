@@ -243,6 +243,16 @@ def _raise_cli_error(action: str, rv: subprocess.CompletedProcess[str]) -> None:
     raise RuntimeError(f"wezterm {action} failed: {detail}")
 
 
+def _resolve_new_pane_id(*, label: str, stdout: str, before: set[int], after: set[int]) -> int:
+    stdout_id = _parse_pane_id(stdout)
+    if stdout_id is not None and stdout_id in after:
+        return stdout_id
+    new_ids = after - before
+    if len(new_ids) != 1:
+        raise RuntimeError(f"unable to identify new {label} pane: stdout={stdout_id!r} new_ids={new_ids}")
+    return next(iter(new_ids))
+
+
 def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
     _debug_timing(f"list_pane_ids start workspace={workspace}")
     rv = subprocess.run(
@@ -308,12 +318,8 @@ def launch_workspace(
     if rv.returncode != 0:
         _raise_cli_error("spawn claude", rv)
     _debug_timing("launch_workspace:spawn claude done")
-    claude_id = _parse_pane_id(rv.stdout)
-    if claude_id is None:
-        new_ids = set(_list_pane_ids_in(wezterm_exe, workspace)) - pre_ids
-        if len(new_ids) != 1:
-            raise RuntimeError(f"unable to identify new claude pane: {new_ids}")
-        claude_id = next(iter(new_ids))
+    claude_ids = set(_list_pane_ids_in(wezterm_exe, workspace))
+    claude_id = _resolve_new_pane_id(label="claude", stdout=rv.stdout, before=pre_ids, after=claude_ids)
     pre_codex = set(_list_pane_ids_in(wezterm_exe, workspace))
     _debug_timing("launch_workspace:split codex start")
     rv2 = subprocess.run(
@@ -334,12 +340,8 @@ def launch_workspace(
     if rv2.returncode != 0:
         _raise_cli_error("split codex", rv2)
     _debug_timing("launch_workspace:split codex done")
-    codex_id = _parse_pane_id(rv2.stdout)
-    if codex_id is None:
-        new_ids = set(_list_pane_ids_in(wezterm_exe, workspace)) - pre_codex
-        if len(new_ids) != 1:
-            raise RuntimeError(f"unable to identify new codex pane: {new_ids}")
-        codex_id = next(iter(new_ids))
+    codex_ids = set(_list_pane_ids_in(wezterm_exe, workspace))
+    codex_id = _resolve_new_pane_id(label="codex", stdout=rv2.stdout, before=pre_codex, after=codex_ids)
     return {
         "workspace": workspace,
         "claude_pane_id": claude_id,

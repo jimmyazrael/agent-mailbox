@@ -156,6 +156,12 @@ def test_validate_workspace_startup_reports_prompt_not_ready(monkeypatch, tmp_pa
 
 def test_launch_workspace_captures_pane_ids_and_passes_env(monkeypatch, tmp_path):
     seen_env = []
+    list_payloads = [
+        [],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}, {"pane_id": 12, "workspace": "agent-mailbox-t1"}],
+    ]
 
     def fake_run(argv, **kwargs):
         seen_env.append(kwargs.get("env"))
@@ -164,7 +170,7 @@ def test_launch_workspace_captures_pane_ids_and_passes_env(monkeypatch, tmp_path
         if "split-pane" in argv:
             return subprocess.CompletedProcess(argv, 0, "12\n", "")
         if "list" in argv:
-            return subprocess.CompletedProcess(argv, 0, "[]", "")
+            return subprocess.CompletedProcess(argv, 0, json.dumps(list_payloads.pop(0)), "")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr("subprocess.run", fake_run)
@@ -181,6 +187,38 @@ def test_launch_workspace_captures_pane_ids_and_passes_env(monkeypatch, tmp_path
     assert result["claude_pane_id"] == 11
     assert result["codex_pane_id"] == 12
     assert any(env and env["AGENT_MAILBOX_CODEX_EXE"] == "C:/codex.exe" for env in seen_env)
+
+
+def test_launch_workspace_uses_live_pane_diff_when_stdout_id_is_invalid(monkeypatch, tmp_path):
+    list_payloads = [
+        [],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}],
+        [{"pane_id": 11, "workspace": "agent-mailbox-t1"}, {"pane_id": 12, "workspace": "agent-mailbox-t1"}],
+    ]
+
+    def fake_run(argv, **kwargs):
+        if "spawn" in argv:
+            return subprocess.CompletedProcess(argv, 0, "1\n", "")
+        if "split-pane" in argv:
+            assert "--pane-id" in argv and argv[argv.index("--pane-id") + 1] == "11"
+            return subprocess.CompletedProcess(argv, 0, "2\n", "")
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps(list_payloads.pop(0)), "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    wez = tmp_path / "wezterm.exe"
+    wez.write_bytes(b"")
+    result = launch_workspace(
+        wezterm_exe=wez,
+        workspace="agent-mailbox-t1",
+        cwd=tmp_path,
+        claude_cmd=["cmd", "/c", "claude.cmd"],
+        codex_cmd=["cmd", "/c", "codex.cmd"],
+    )
+    assert result["claude_pane_id"] == 11
+    assert result["codex_pane_id"] == 12
 
 
 def test_find_codex_prefers_latest_vscode_extension(monkeypatch, tmp_path):
