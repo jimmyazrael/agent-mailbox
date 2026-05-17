@@ -21,26 +21,30 @@ def doorbell_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
     return (
         f"{peer.capitalize()} has replied on agent-mailbox task {task_id}.\n\n"
         "Read the latest reply in the chat monitor pane.\n\n"
-        "To respond:\n"
-        f"1. Write your reply to: {write_path}\n"
-        "2. Use frontmatter: from, to, status, summary; then body.\n"
-        "   status MUST be one of: continue, blocked, final, error.\n"
-        "3. End with: <!-- AGENT-MAILBOX:DONE -->\n"
-        "4. Stop.\r"
+        f"To respond, write your reply to: {write_path}\n\n"
+        "Required frontmatter (exact field names):\n"
+        f"  from: {agent}\n"
+        f"  to: {peer}\n"
+        "  status: <continue | blocked | final | error>\n"
+        "  summary: <one-line summary>\n\n"
+        "End the file with the literal sentinel on its own line: <!-- AGENT-MAILBOX:DONE -->\n\n"
+        "Then stop.\r"
     )
 
 
-def first_turn_text(*, agent: str, task_id: str, root: Path) -> str:
+def first_turn_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
     write_path = next_outbox_path(root, task_id, agent)
     return (
         f"You have the first turn on agent-mailbox task {task_id}.\n\n"
         "Read the bootstrap context in the chat monitor pane.\n\n"
-        "To respond:\n"
-        f"1. Write your reply to: {write_path}\n"
-        "2. Use frontmatter: from, to, status, summary; then body.\n"
-        "   status MUST be one of: continue, blocked, final, error.\n"
-        "3. End with: <!-- AGENT-MAILBOX:DONE -->\n"
-        "4. Stop.\r"
+        f"To respond, write your reply to: {write_path}\n\n"
+        "Required frontmatter (exact field names):\n"
+        f"  from: {agent}\n"
+        f"  to: {peer}\n"
+        "  status: <continue | blocked | final | error>\n"
+        "  summary: <one-line summary>\n\n"
+        "End the file with the literal sentinel on its own line: <!-- AGENT-MAILBOX:DONE -->\n\n"
+        "Then stop.\r"
     )
 
 
@@ -223,7 +227,7 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
         first_turn = int(room["round"]) == 0
         peer = _peer_for_agent(conn, task_id, turn)
         text = (
-            first_turn_text(agent=turn, task_id=task_id, root=root)
+            first_turn_text(agent=turn, peer=peer, task_id=task_id, root=root)
             if first_turn
             else doorbell_text(agent=turn, peer=peer, task_id=task_id, root=root)
         )

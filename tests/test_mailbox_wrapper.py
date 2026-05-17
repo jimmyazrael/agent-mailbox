@@ -663,7 +663,9 @@ def test_dry_run_prints_current_turn_doorbell_without_mutating(tmp_path):
     assert data["agent"] == "claude"
     assert data["peer"] == "codex"
     assert f"agent-mailbox task {task_id}" in data["doorbell_text"]
-    assert "Write your reply to:" in data["doorbell_text"]
+    assert "write your reply to:" in data["doorbell_text"]
+    assert "from: claude" in data["doorbell_text"]
+    assert "to: codex" in data["doorbell_text"]
     conn = connect_db(root)
     after = dict(conn.execute("SELECT turn, round, last_message_id FROM rooms WHERE id=?", (task_id,)).fetchone())
     conn.close()
@@ -902,6 +904,49 @@ def test_pause_stop_and_repair_rebind(tmp_path):
     assert _run("stop", "--root", str(root), "--task-id", task_id).returncode == 0
     conn = connect_db(root)
     assert conn.execute("SELECT status FROM rooms WHERE id=?", (task_id,)).fetchone()["status"] == "stopped"
+
+
+def test_stop_close_panes_kills_task_scoped_processes(monkeypatch, tmp_path):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    project = tmp_path / "project"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(project), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id) VALUES(?, 'claude', 123)", (task_id,))
+    room = conn.execute("SELECT workspace FROM rooms WHERE id=?", (task_id,)).fetchone()
+    workspace = room["workspace"]
+    conn.close()
+    killed_processes = []
+    killed_panes = []
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr(
+        "tui_launcher.run_wezterm_cli",
+        lambda argv, **kwargs: killed_panes.append(int(argv[argv.index("--pane-id") + 1])) or subprocess.CompletedProcess(argv, 0, "", ""),
+    )
+    monkeypatch.setattr(mailbox_cli.os, "name", "nt")
+    monkeypatch.setattr(mailbox_cli.os, "getpid", lambda: 999)
+    monkeypatch.setattr(mailbox_cli, "_run_taskkill_tree", lambda pid: killed_processes.append(pid) or True)
+
+    rows = json.dumps(
+        [
+            {"ProcessId": 111, "CommandLine": f"cmd /k launch_control_panel {workspace}"},
+            {"ProcessId": 222, "CommandLine": "cmd /k unrelated"},
+            {"ProcessId": 999, "CommandLine": f"python mailbox.py stop --root {root}"},
+        ]
+    )
+
+    def fake_run(argv, **kwargs):
+        if argv[:3] == ["powershell", "-NoProfile", "-Command"]:
+            return subprocess.CompletedProcess(argv, 0, rows, "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    args = mailbox_cli.build_parser().parse_args(["stop", "--root", str(root), "--task-id", task_id, "--close-panes", "--yes", "--format", "json"])
+    assert mailbox_cli.cmd_stop(args) == 0
+    assert killed_panes == [123]
+    assert killed_processes == [111]
 
 
 def test_status_detects_dead_watcher_in_running_state(tmp_path):

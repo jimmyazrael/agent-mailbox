@@ -33,14 +33,20 @@ def test_doorbell_text_points_to_outbox_and_sentinel(tmp_path):
     assert "Read the latest reply in the chat monitor pane" in text
     assert str(tmp_path / "t1" / "outbox" / "codex" / "000001.md") in text
     assert "<!-- AGENT-MAILBOX:DONE -->" in text
-    assert "Stop." in text
+    assert "Then stop." in text
+    assert "from: codex" in text
+    assert "to: claude" in text
+    assert "status: <continue | blocked | final | error>" in text
 
 
 def test_first_turn_text_points_to_bootstrap_context_and_outbox(tmp_path):
-    text = first_turn_text(agent="claude", task_id="t1", root=tmp_path)
+    text = first_turn_text(agent="claude", peer="codex", task_id="t1", root=tmp_path)
     assert "You have the first turn" in text
     assert "Read the bootstrap context in the chat monitor pane" in text
     assert str(tmp_path / "t1" / "outbox" / "claude" / "000001.md") in text
+    assert "from: claude" in text
+    assert "to: codex" in text
+    assert "status: <continue | blocked | final | error>" in text
 
 
 def test_run_once_imports_outbox_then_sends_doorbell_to_next_turn(monkeypatch, tmp_path):

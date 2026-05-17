@@ -185,3 +185,18 @@ def test_mailbox_eval_failed_real_run_stops_task(monkeypatch, tmp_path):
     )
     assert result.status == "fail"
     assert any(call[:2] == ("stop", "--root") and "--close-panes" in call for call in calls)
+
+
+def test_stop_real_task_reports_post_stop_mux_timeout(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        mailbox_eval,
+        "_run_mailbox",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, '{"ok": true}', ""),
+    )
+
+    def fake_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    notes = mailbox_eval._stop_real_task(tmp_path / "mb", "t1", wezterm_exe=Path("wezterm"))
+    assert notes == ["post-stop mux health check timed out"]

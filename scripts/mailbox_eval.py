@@ -16,7 +16,7 @@ from typing import Any
 from agent_chat import connect_db, export_transcript_md
 from mailbox_lib import pid_exists
 from outbox import SENTINEL
-from pane_control import build_activate_pane_argv, build_get_text_argv, build_send_text_argv, build_split_argv
+from pane_control import build_activate_pane_argv, build_get_text_argv, build_list_argv, build_send_text_argv, build_split_argv
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 MAILBOX = SKILL_ROOT / "scripts" / "mailbox.py"
@@ -416,24 +416,39 @@ def _build_v2_relay_cmd(*, task_id: str, mailbox_root: Path, project: Path, rela
     ]
 
 
-def _stop_real_task(mailbox_root: Path, task_id: str) -> None:
-    try:
-        _run_mailbox(
-            "stop",
-            "--root",
-            str(mailbox_root),
-            "--task-id",
-            task_id,
-            "--close-panes",
-            "--yes",
-            "--format",
-            "json",
-            timeout=60,
-        )
-    except subprocess.TimeoutExpired:
-        # The scenario result is more important than a stuck cleanup command.
-        # External cleanup can still reap panes by workspace/process name.
-        pass
+def _stop_real_task(mailbox_root: Path, task_id: str, *, wezterm_exe: Path | None = None) -> list[str]:
+    notes: list[str] = []
+    rv = _run_mailbox(
+        "stop",
+        "--root",
+        str(mailbox_root),
+        "--task-id",
+        task_id,
+        "--close-panes",
+        "--yes",
+        "--format",
+        "json",
+        timeout=60,
+    )
+    if rv.returncode != 0:
+        notes.append(f"cleanup stop failed: {_command_error(rv)}")
+    if wezterm_exe is not None:
+        try:
+            mux = subprocess.run(
+                build_list_argv(wezterm_exe=wezterm_exe),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                stdin=subprocess.DEVNULL,
+            )
+        except subprocess.TimeoutExpired:
+            notes.append("post-stop mux health check timed out")
+        else:
+            if mux.returncode != 0:
+                notes.append(f"post-stop mux health check failed: {(mux.stderr or mux.stdout).strip()}")
+    return notes
 
 
 def _write_outbox(path: Path, *, from_agent: str, to_agent: str, status: str, summary: str, body: str) -> None:
@@ -553,6 +568,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
     context_path.write_text(scenario.get("context", ""), encoding="utf-8", newline="\n")
     notes: list[str] = []
     task_id: str | None = None
+    wezterm_exe: Path | None = None
     result: ScenarioResult | None = None
     try:
         if scenario.get("relay_version") != "v2-outbox":
@@ -640,10 +656,9 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
         return result
     finally:
         if launch_real and task_id and (not keep or (result is not None and result.status != "pass")):
-            try:
-                _stop_real_task(mailbox_root, task_id)
-            except Exception:
-                pass
+            cleanup_notes = _stop_real_task(mailbox_root, task_id, wezterm_exe=wezterm_exe)
+            if cleanup_notes and result is not None:
+                result.notes.extend(cleanup_notes)
         if not keep and not launch_real:
             shutil.rmtree(work_root, ignore_errors=True)
 

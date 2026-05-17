@@ -90,6 +90,71 @@ def lint_protocol_header(*, status: str, body: str, participants: Optional[set[s
     return warnings
 
 
+def _run_taskkill_tree(pid: int) -> bool:
+    if os.name != "nt":
+        return False
+    if pid == os.getpid():
+        return False
+    try:
+        rv = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return rv.returncode == 0
+
+
+def _kill_task_scoped_processes(*, task_id: str, workspace: str, root: Path, project_cwd: Path) -> list[int]:
+    if os.name != "nt":
+        return []
+    tokens = {
+        task_id.lower(),
+        workspace.lower(),
+        str(root).lower(),
+        str(project_cwd).lower(),
+    }
+    killed: list[int] = []
+    ps = (
+        "Get-CimInstance Win32_Process | "
+        "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+    )
+    try:
+        rv = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdin=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if rv.returncode != 0 or not rv.stdout.strip():
+        return []
+    try:
+        data = json.loads(rv.stdout)
+    except json.JSONDecodeError:
+        return []
+    rows = data if isinstance(data, list) else [data]
+    for row in rows:
+        try:
+            pid = int(row.get("ProcessId"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if pid == os.getpid():
+            continue
+        command = str(row.get("CommandLine") or "").lower()
+        if command and any(token and token in command for token in tokens):
+            if _run_taskkill_tree(pid):
+                killed.append(pid)
+    return killed
+
+
 def _root(args) -> Path:
     return (args.root or default_root()).expanduser()
 
@@ -582,7 +647,7 @@ def cmd_doorbell(args) -> int:
     from tui_launcher import find_wezterm
     from tui_relay_v2 import doorbell_text, first_turn_text, send_doorbell
 
-    text = first_turn_text(agent=agent, task_id=task_id, root=root) if first_turn else doorbell_text(agent=agent, peer=peer, task_id=task_id, root=root)
+    text = first_turn_text(agent=agent, peer=peer, task_id=task_id, root=root) if first_turn else doorbell_text(agent=agent, peer=peer, task_id=task_id, root=root)
     ok = send_doorbell(wezterm_exe=find_wezterm(), pane_id=int(pane["pane_id"]), text=text)
     return _emit(args, ok=ok, data={"task_id": task_id, "agent": agent}, error=None if ok else "send-text failed")
 
@@ -1193,7 +1258,7 @@ def cmd_dry_run(args) -> int:
         peer = peer_for(participants, turn)
         from tui_relay_v2 import doorbell_text, first_turn_text
 
-        text = first_turn_text(agent=turn, task_id=task_id, root=root) if int(room["round"]) == 0 else doorbell_text(agent=turn, peer=peer, task_id=task_id, root=root)
+        text = first_turn_text(agent=turn, peer=peer, task_id=task_id, root=root) if int(room["round"]) == 0 else doorbell_text(agent=turn, peer=peer, task_id=task_id, root=root)
     finally:
         conn.close()
     return _emit(args, ok=True, data={"task_id": task_id, "agent": turn, "peer": peer, "doorbell_text": text})
@@ -1504,8 +1569,15 @@ def cmd_stop(args) -> int:
     root = _root(args)
     conn = connect_db(root)
     pane_ids: list[int] = []
+    task_id = ""
+    workspace = ""
+    project_cwd = Path(".")
     try:
         task_id = _resolve(conn, args.task_id)
+        room = conn.execute("SELECT workspace, project_cwd FROM rooms WHERE id=?", (task_id,)).fetchone()
+        if room:
+            workspace = room["workspace"]
+            project_cwd = Path(room["project_cwd"])
         pane_ids = [int(row["pane_id"]) for row in conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_id IS NOT NULL", (task_id,))]
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("UPDATE rooms SET status='stopped' WHERE id=?", (task_id,))
@@ -1523,12 +1595,33 @@ def cmd_stop(args) -> int:
         from pane_control import build_kill_pane_argv
 
         wez = find_wezterm()
+        killed_panes: list[int] = []
         for pane_id in pane_ids:
-            run_wezterm_cli(
+            rv = run_wezterm_cli(
                 build_kill_pane_argv(wezterm_exe=wez, pane_id=pane_id),
                 timeout=15,
             )
-    return _emit(args, ok=True, data={"task_id": task_id, "status": "stopped"})
+            if rv.returncode == 0:
+                killed_panes.append(pane_id)
+        killed_processes = _kill_task_scoped_processes(
+            task_id=task_id,
+            workspace=workspace,
+            root=root,
+            project_cwd=project_cwd,
+        )
+    else:
+        killed_panes = []
+        killed_processes = []
+    return _emit(
+        args,
+        ok=True,
+        data={
+            "task_id": task_id,
+            "status": "stopped",
+            "killed_pane_ids": killed_panes,
+            "killed_process_ids": killed_processes,
+        },
+    )
 
 
 def cmd_repair(args) -> int:
