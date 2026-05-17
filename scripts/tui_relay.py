@@ -126,7 +126,7 @@ def _peer_for_agent(conn, room_id: str, agent: str) -> str:
     return peers[0]
 
 
-def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
+def run_once(*, root: Path, task_id: str, wezterm_exe: Path, force: bool = False) -> str:
     conn = connect_db(root)
     try:
         room = conn.execute("SELECT * FROM rooms WHERE id=?", (task_id,)).fetchone()
@@ -146,7 +146,7 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             return "no_turn"
         last_message_id = int(room["last_message_id"])
         first_turn = int(room["round"]) == 0
-        if state and state["last_triggered_turn"] == turn and int(state["last_triggered_message_id"]) == last_message_id:
+        if state and state["last_triggered_turn"] == turn and int(state["last_triggered_message_id"]) == last_message_id and not force:
             pane = conn.execute(
                 "SELECT pane_id FROM panes WHERE room_id=? AND pane_role=?",
                 (task_id, turn),
@@ -210,8 +210,14 @@ def run_watcher_loop(
     finally:
         conn.close()
     iters = 0
+    last_idle_retry_at = time.monotonic()
     while True:
         result = run_once(root=root, task_id=task_id, wezterm_exe=wezterm_exe)
+        if result == "triggered":
+            last_idle_retry_at = time.monotonic()
+        if result == "idle" and time.monotonic() - last_idle_retry_at >= 15.0:
+            last_idle_retry_at = time.monotonic()
+            result = run_once(root=root, task_id=task_id, wezterm_exe=wezterm_exe, force=True)
         if result in {"terminal", "missing_room"}:
             return result
         iters += 1

@@ -29,6 +29,18 @@ def test_run_once_triggers_only_once(monkeypatch, tmp_path):
     assert calls[0]["first_turn"] is False
 
 
+def test_run_once_force_retries_same_message(monkeypatch, tmp_path):
+    conn = _seed(tmp_path)
+    send_message(conn, root=tmp_path, room_id="t1", from_agent="codex", to_agent="claude", kind="message", status="continue", summary="go", body="body")
+    calls = []
+    monkeypatch.setattr("tui_relay.send_trigger", lambda **kwargs: calls.append(kwargs) or True)
+    monkeypatch.setattr("tui_relay._pane_alive", lambda *args, **kwargs: True)
+    monkeypatch.setattr("tui_relay._pane_error_reason", lambda *args, **kwargs: None)
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm")) == "triggered"
+    assert run_once(root=tmp_path, task_id="t1", wezterm_exe=Path("wezterm"), force=True) == "triggered"
+    assert len(calls) == 2
+
+
 def test_run_once_first_turn_trigger_includes_first_turn_flag(monkeypatch, tmp_path):
     _seed(tmp_path)
     calls = []
