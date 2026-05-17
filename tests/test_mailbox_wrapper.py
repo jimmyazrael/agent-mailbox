@@ -437,6 +437,14 @@ def test_launch_tui_does_not_bootstrap_codex_with_task_prompt(monkeypatch, tmp_p
     monkeypatch.setattr("tui_launcher.find_codex", lambda: tmp_path / "codex.exe")
     monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr(
+        "tui_launcher.validate_workspace_startup",
+        lambda **kwargs: {
+            "ready": True,
+            "visible": True,
+            "agents": {"claude": {"state": "ready"}, "codex": {"state": "ready"}},
+        },
+    )
     monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
     monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
 
@@ -472,6 +480,14 @@ def test_launch_tui_chat_uses_existing_window_id(monkeypatch, tmp_path):
     monkeypatch.setattr("tui_launcher.find_codex", lambda: None)
     monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr(
+        "tui_launcher.validate_workspace_startup",
+        lambda **kwargs: {
+            "ready": True,
+            "visible": True,
+            "agents": {"claude": {"state": "ready"}, "codex": {"state": "ready"}},
+        },
+    )
     monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
     monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
     monkeypatch.setattr("subprocess.run", fake_run)
@@ -513,6 +529,14 @@ def test_launch_tui_attaches_visible_gui_after_panes(monkeypatch, tmp_path):
     monkeypatch.setattr("tui_launcher.find_codex", lambda: None)
     monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
     monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr(
+        "tui_launcher.validate_workspace_startup",
+        lambda **kwargs: {
+            "ready": True,
+            "visible": True,
+            "agents": {"claude": {"state": "ready"}, "codex": {"state": "ready"}},
+        },
+    )
     monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda wez, ws, cwd: attach_calls.append((wez, ws, cwd)))
     monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
     monkeypatch.setattr("subprocess.run", fake_run)
@@ -522,6 +546,53 @@ def test_launch_tui_attaches_visible_gui_after_panes(monkeypatch, tmp_path):
     args = mailbox_cli.build_parser().parse_args(["launch-tui", "--root", str(root), "--task-id", task_id, "--format", "json"])
     assert mailbox_cli.cmd_launch_tui(args) == 0
     assert attach_calls == [(tmp_path / "wezterm.exe", workspace, tmp_path)]
+
+
+def test_startup_gate_pauses_relay_when_agent_pane_not_ready(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    split_calls = []
+    launched_workspace = None
+
+    def fake_launch_workspace(**kwargs):
+        nonlocal launched_workspace
+        launched_workspace = kwargs["workspace"]
+        return {"workspace": kwargs["workspace"], "claude_pane_id": 11, "codex_pane_id": 12, "spawned_at": "now"}
+
+    def fake_run(argv, **kwargs):
+        if "split-pane" in argv:
+            split_calls.append(argv)
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps([{"pane_id": 11, "workspace": launched_workspace or "w", "window_id": 99}]), "")
+        if "spawn" in argv:
+            return subprocess.CompletedProcess(argv, 0, "44\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr("tui_launcher.find_codex", lambda: None)
+    monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
+    monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr(
+        "tui_launcher.validate_workspace_startup",
+        lambda **kwargs: {
+            "ready": False,
+            "visible": True,
+            "agents": {"claude": {"state": "ready"}, "codex": {"state": "update_prompt"}},
+        },
+    )
+    monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
+    monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(["start", "--root", str(root), "--prefix", "t2", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json"])
+    assert mailbox_cli.cmd_start(args) == 0
+    conn = connect_db(root)
+    task_id = conn.execute("SELECT id FROM rooms").fetchone()["id"]
+    relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
+    assert relay["paused"] == 1
+    assert relay["pause_reason"] == "startup_not_ready:claude=ready,codex=update_prompt"
+    assert not any("launch_relay_pane.cmd" in " ".join(call) for call in split_calls)
 
 
 def test_start_emits_single_json_and_binds_relay_fake_pane(tmp_path):

@@ -5,7 +5,17 @@ from pathlib import Path
 import pytest
 
 from pane_control import build_spawn_argv
-from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_codex, find_wezterm, launch_workspace, lookup_pane, parse_wezterm_list
+from tui_launcher import (
+    attach_workspace_gui,
+    classify_agent_pane,
+    ensure_mux_alive,
+    find_codex,
+    find_wezterm,
+    launch_workspace,
+    lookup_pane,
+    parse_wezterm_list,
+    validate_workspace_startup,
+)
 
 
 def test_find_wezterm_uses_path(monkeypatch, tmp_path):
@@ -56,6 +66,73 @@ def test_parse_and_lookup_wezterm_list():
     )
     panes = parse_wezterm_list(payload)
     assert {p["pane_id"] for p in lookup_pane(panes, workspace="agent-mailbox-t1")} == {3}
+
+
+def test_classify_agent_pane_states():
+    assert classify_agent_pane(">_ OpenAI Codex\nmodel: gpt-5.4", agent="codex") == "ready"
+    assert classify_agent_pane("Claude Code v2.1.143\nWelcome back", agent="claude") == "ready"
+    assert classify_agent_pane("Update now\nSkip until next version", agent="codex") == "update_prompt"
+    assert classify_agent_pane("Do you trust the files in this folder?", agent="codex") == "trust_prompt"
+    assert classify_agent_pane("unexpected status 503 Service Unavailable: auth_unavailable", agent="codex") == "auth_unavailable"
+    assert classify_agent_pane("'foo' is not recognized as an internal or external command", agent="codex") == "shell_error"
+
+
+def test_validate_workspace_startup_requires_visible_ready_agent_panes(monkeypatch, tmp_path):
+    panes = json.dumps(
+        [
+            {"pane_id": 11, "workspace": "agent-mailbox-t1", "window_id": 1},
+            {"pane_id": 12, "workspace": "agent-mailbox-t1", "window_id": 1},
+        ]
+    )
+
+    def fake_run(argv, **kwargs):
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, panes, "")
+        if "get-text" in argv and "11" in argv:
+            return subprocess.CompletedProcess(argv, 0, "Claude Code v2.1.143", "")
+        if "get-text" in argv and "12" in argv:
+            return subprocess.CompletedProcess(argv, 0, ">_ OpenAI Codex", "")
+        return subprocess.CompletedProcess(argv, 1, "", "unexpected")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    status = validate_workspace_startup(
+        wezterm_exe=tmp_path / "wezterm.exe",
+        workspace="agent-mailbox-t1",
+        claude_pane_id=11,
+        codex_pane_id=12,
+    )
+    assert status["ready"] is True
+    assert status["visible"] is True
+    assert status["agents"]["claude"]["state"] == "ready"
+    assert status["agents"]["codex"]["state"] == "ready"
+
+
+def test_validate_workspace_startup_reports_prompt_not_ready(monkeypatch, tmp_path):
+    panes = json.dumps(
+        [
+            {"pane_id": 11, "workspace": "agent-mailbox-t1", "window_id": 1},
+            {"pane_id": 12, "workspace": "agent-mailbox-t1", "window_id": 1},
+        ]
+    )
+
+    def fake_run(argv, **kwargs):
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, panes, "")
+        if "get-text" in argv and "11" in argv:
+            return subprocess.CompletedProcess(argv, 0, "Claude Code v2.1.143", "")
+        if "get-text" in argv and "12" in argv:
+            return subprocess.CompletedProcess(argv, 0, "Update now\nSkip until next version", "")
+        return subprocess.CompletedProcess(argv, 1, "", "unexpected")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    status = validate_workspace_startup(
+        wezterm_exe=tmp_path / "wezterm.exe",
+        workspace="agent-mailbox-t1",
+        claude_pane_id=11,
+        codex_pane_id=12,
+    )
+    assert status["ready"] is False
+    assert status["agents"]["codex"]["state"] == "update_prompt"
 
 
 def test_launch_workspace_captures_pane_ids_and_passes_env(monkeypatch, tmp_path):

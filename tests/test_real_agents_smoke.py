@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from pane_control import build_send_text_argv, build_split_argv
-from tui_launcher import find_wezterm
+from tui_launcher import find_wezterm, validate_workspace_startup
 
 
 def _get_text(wezterm_exe: Path, pane_id: int) -> str:
@@ -135,10 +135,28 @@ def test_real_agents_one_round_smoke(tmp_path):
     launch = json.loads(launch_rv.stdout)["data"]
 
     wez = find_wezterm()
+    startup = validate_workspace_startup(
+        wezterm_exe=wez,
+        workspace=launch["workspace"],
+        claude_pane_id=int(launch["claude_pane_id"]),
+        codex_pane_id=int(launch["codex_pane_id"]),
+    )
+    assert startup["visible"] is True
+    assert startup["agents"]["claude"]["state"] in {"ready", "trust_prompt"}
+    assert startup["agents"]["codex"]["state"] in {"ready", "trust_prompt"}
+
     # Real TUIs may stop at workspace-trust prompts for pytest temp dirs. Pick
     # option 1 in both panes before starting the relay so the first trigger lands.
     for pane_key in ("claude_pane_id", "codex_pane_id"):
         _accept_trust_prompt(wez, int(launch[pane_key]))
+
+    startup = validate_workspace_startup(
+        wezterm_exe=wez,
+        workspace=launch["workspace"],
+        claude_pane_id=int(launch["claude_pane_id"]),
+        codex_pane_id=int(launch["codex_pane_id"]),
+    )
+    assert startup["ready"] is True, startup
 
     skill_root = Path(__file__).resolve().parent.parent
     relay_cmd = [
@@ -213,3 +231,4 @@ def test_real_agents_one_round_smoke(tmp_path):
     assert sessions["claude"]["session_id"]
     assert sessions["codex"]["discovery_status"] == "discovered"
     assert float(usage.get("known_cost_usd", 0.0)) <= 0.10
+    _mailbox("stop", "--root", str(root), "--task-id", task_id, "--close-panes", "--yes")

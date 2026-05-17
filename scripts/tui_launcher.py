@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pane_control import build_list_argv, build_spawn_argv, build_split_argv, build_start_argv
+from pane_control import build_get_text_argv, build_list_argv, build_spawn_argv, build_split_argv, build_start_argv
 
 WEZTERM_WELL_KNOWN_PATHS = [
     Path("C:/Program Files/WezTerm/wezterm.exe"),
@@ -89,6 +89,82 @@ def lookup_pane(
     if pane_id is not None:
         out = [pane for pane in out if int(pane.get("pane_id", -1)) == int(pane_id)]
     return out
+
+
+def get_pane_text(wezterm_exe: Path, pane_id: int, *, start_line: int = -80) -> str:
+    rv = subprocess.run(
+        build_get_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, start_line=start_line),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    rv.check_returncode()
+    return rv.stdout or ""
+
+
+def classify_agent_pane(text: str, *, agent: str) -> str:
+    tail = "\n".join((text or "").splitlines()[-30:]).lower()
+    full = (text or "").lower()
+    if "auth_unavailable" in full or "no auth available" in full:
+        return "auth_unavailable"
+    if "unexpected status 503" in full or "service unavailable" in full:
+        return "service_unavailable"
+    if "403" in full and ("forbidden" in full or "unauthorized" in full):
+        return "auth_403"
+    if "is not recognized as an internal or external command" in full:
+        return "shell_error"
+    if "update now" in tail and "skip until next version" in tail:
+        return "update_prompt"
+    if "do you trust" in tail or "yes, i trust" in tail or "yes, continue" in tail:
+        return "trust_prompt"
+    if agent == "codex" and ("openai codex" in full or ">_ openai codex" in full):
+        return "ready"
+    if agent == "claude" and "claude code" in full:
+        return "ready"
+    if "clink" in tail or "copyright (c)" in tail or "windows\\system32\\cmd" in tail:
+        return "shell"
+    return "unknown"
+
+
+def validate_workspace_startup(
+    *,
+    wezterm_exe: Path,
+    workspace: str,
+    claude_pane_id: int,
+    codex_pane_id: int,
+) -> Dict[str, Any]:
+    rv = subprocess.run(
+        build_list_argv(wezterm_exe=wezterm_exe),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=10,
+    )
+    rv.check_returncode()
+    panes = parse_wezterm_list(rv.stdout)
+    workspace_panes = lookup_pane(panes, workspace=workspace)
+    by_id = {int(pane["pane_id"]): pane for pane in workspace_panes}
+    status: Dict[str, Any] = {
+        "workspace": workspace,
+        "visible": bool(workspace_panes),
+        "pane_count": len(workspace_panes),
+        "agents": {},
+        "ready": False,
+    }
+    for agent, pane_id in {"claude": claude_pane_id, "codex": codex_pane_id}.items():
+        if int(pane_id) not in by_id:
+            state = "missing_pane"
+        else:
+            try:
+                state = classify_agent_pane(get_pane_text(wezterm_exe, int(pane_id)), agent=agent)
+            except subprocess.CalledProcessError:
+                state = "unreadable_pane"
+        status["agents"][agent] = {"pane_id": int(pane_id), "state": state}
+    status["ready"] = bool(status["visible"]) and all(agent["state"] == "ready" for agent in status["agents"].values())
+    return status
 
 
 def _parse_pane_id(stdout: str) -> Optional[int]:

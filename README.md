@@ -198,6 +198,8 @@ Tagged releases:
 
 Current scenario coverage includes hard real Claude/Codex/WezTerm cases for context bootstrap, blocked-state injection, duplicate triggers, Codex rediscovery, context overload, passive consensus, and mid-handoff duplicate-trigger resilience.
 
+Important work is gated on a real GUI startup smoke. Unit tests and dry-run scenarios are not enough: the smoke must prove that a visible WezTerm workspace exists, Claude and Codex panes are live agent TUIs rather than shells/prompts/auth errors, the relay starts only after readiness, and failed runs clean up panes.
+
 Run unit tests:
 
 ```powershell
@@ -208,5 +210,12 @@ Run a real scenario only when intentional:
 
 ```powershell
 $env:AGENT_MAILBOX_RUN_REAL_SMOKE = "1"
-python scripts\mailbox_eval.py --scenario AM-01 --run-real --keep
+python scripts\mailbox_eval.py --scenario AM-08 --run-real
+```
+
+Run the real GUI startup smoke before dogfooding important work:
+
+```powershell
+$env:AGENT_MAILBOX_RUN_REAL_SMOKE = "1"
+pytest tests\test_real_agents_smoke.py -q -m real_agents
 ```

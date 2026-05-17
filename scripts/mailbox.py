@@ -278,7 +278,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             chat_pane_id = parts[3] if getattr(args, "with_chat", False) and len(parts) > 3 else None
             control_pane_id = parts[4] if getattr(args, "with_control_panel", False) and len(parts) > 4 else None
         else:
-            from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_codex, find_wezterm, launch_workspace
+            from tui_launcher import attach_workspace_gui, ensure_mux_alive, find_codex, find_wezterm, launch_workspace, validate_workspace_startup
 
             wez = find_wezterm()
             ensure_mux_alive(wez)
@@ -297,35 +297,52 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             relay_pane_id = None
             chat_pane_id = None
             control_pane_id = None
+            startup = validate_workspace_startup(
+                wezterm_exe=wez,
+                workspace=workspace,
+                claude_pane_id=int(result["claude_pane_id"]),
+                codex_pane_id=int(result["codex_pane_id"]),
+            )
             if launch_relay:
                 from pane_control import build_split_argv
 
-                relay_cmd = [
-                    "cmd",
-                    "/c",
-                    str(scripts / "launch_relay_pane.cmd"),
-                    task_id,
-                    str(root),
-                    str(project_cwd),
-                    str(scripts / "mailbox.py"),
-                ]
-                if getattr(args, "max_iters", None) is not None:
-                    relay_cmd.append(str(args.max_iters))
-                rv = subprocess.run(
-                    build_split_argv(
-                        wezterm_exe=wez,
-                        source_pane_id=result["codex_pane_id"],
-                        direction="bottom",
-                        percent=25,
-                        cwd=project_cwd,
-                        cmd=relay_cmd,
-                    ),
-                    capture_output=True,
-                    text=True,
-                )
-                rv.check_returncode()
-                text = rv.stdout.strip()
-                relay_pane_id = int(text) if text.isdigit() else None
+                if startup["ready"]:
+                    relay_cmd = [
+                        "cmd",
+                        "/c",
+                        str(scripts / "launch_relay_pane.cmd"),
+                        task_id,
+                        str(root),
+                        str(project_cwd),
+                        str(scripts / "mailbox.py"),
+                    ]
+                    if getattr(args, "max_iters", None) is not None:
+                        relay_cmd.append(str(args.max_iters))
+                    rv = subprocess.run(
+                        build_split_argv(
+                            wezterm_exe=wez,
+                            source_pane_id=result["codex_pane_id"],
+                            direction="bottom",
+                            percent=25,
+                            cwd=project_cwd,
+                            cmd=relay_cmd,
+                        ),
+                        capture_output=True,
+                        text=True,
+                    )
+                    rv.check_returncode()
+                    text = rv.stdout.strip()
+                    relay_pane_id = int(text) if text.isdigit() else None
+                else:
+                    reason = "startup_not_ready:" + ",".join(
+                        f"{agent}={info['state']}" for agent, info in startup["agents"].items()
+                    )
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute(
+                        "UPDATE tui_relay_state SET paused=1, pause_reason=? WHERE room_id=?",
+                        (reason, task_id),
+                    )
+                    conn.execute("COMMIT")
             if getattr(args, "with_chat", False):
                 chat_cmd = [
                     "cmd",
@@ -350,6 +367,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                 ]
                 control_pane_id = _spawn_workspace_tab(wezterm_exe=wez, workspace=workspace, cwd=project_cwd, cmd=control_cmd)
             attach_workspace_gui(wez, workspace, project_cwd)
+            result["startup"] = startup
         set_pane(conn, task_id, "claude", pane_id=result["claude_pane_id"])
         set_pane(conn, task_id, "codex", pane_id=result["codex_pane_id"])
         if relay_pane_id is not None:
@@ -384,6 +402,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             "control_pane_id": control_pane_id,
             "codex_session_id": discovery["session_id"],
             "codex_discovery_status": discovery["status"],
+            "startup": result.get("startup"),
         }
     finally:
         conn.close()
@@ -1009,6 +1028,8 @@ def cmd_resume(args) -> int:
             row["agent"]: dict(row)
             for row in conn.execute("SELECT * FROM agent_sessions WHERE room_id=?", (task_id,)).fetchall()
         }
+        if not sessions["codex"]["session_id"]:
+            return _emit(args, ok=False, error="missing codex session_id; run mailbox repair --rediscover-codex")
         panes_db = {row["pane_role"]: row["pane_id"] for row in conn.execute("SELECT * FROM panes WHERE room_id=?", (task_id,))}
         from tui_launcher import find_wezterm, parse_wezterm_list
         from pane_control import build_list_argv, build_spawn_argv, build_split_argv
@@ -1030,8 +1051,6 @@ def cmd_resume(args) -> int:
             for role in ("claude", "codex"):
                 if panes_db.get(role) is None or int(panes_db[role]) not in live_ids:
                     actions.append(f"recreate_{role}_pane")
-        if ("relaunch_workspace" in actions or "recreate_codex_pane" in actions) and not sessions["codex"]["session_id"]:
-            return _emit(args, ok=False, error="missing codex session_id; run mailbox repair --rediscover-codex")
         project_cwd = Path(room["project_cwd"])
         scripts = Path(__file__).resolve().parent
         if "relaunch_workspace" in actions:

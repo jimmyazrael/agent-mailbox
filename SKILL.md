@@ -219,7 +219,14 @@ Before using this skill on important work, prefer hard real-agent scenarios over
 ```powershell
 python <skill>\scripts\mailbox_eval.py --scenario AM-01
 $env:AGENT_MAILBOX_RUN_REAL_SMOKE = "1"
-python <skill>\scripts\mailbox_eval.py --scenario AM-01 --run-real --keep
+python <skill>\scripts\mailbox_eval.py --scenario AM-08 --run-real
+```
+
+Before dogfooding important work, run a real GUI startup smoke. It must prove that a visible WezTerm workspace exists, Claude and Codex panes are live agent TUIs rather than shells/prompts/auth errors, relay starts only after readiness, and failed runs clean up panes:
+
+```powershell
+$env:AGENT_MAILBOX_RUN_REAL_SMOKE = "1"
+pytest <skill>\tests\test_real_agents_smoke.py -q -m real_agents
 ```
 
 Scenario definitions live under `eval/scenarios`. They should be adversarial and designed to expose failures: context loss, approval friction, blocked-state handling, duplicate triggers, rediscovery, and context overload.
