@@ -230,6 +230,19 @@ def _parse_pane_id(stdout: str) -> Optional[int]:
     return int(text) if text.isdigit() else None
 
 
+def _raise_cli_error(action: str, rv: subprocess.CompletedProcess[str]) -> None:
+    detail = " ".join(
+        part
+        for part in [
+            f"rc={rv.returncode}",
+            f"stdout={rv.stdout.strip()!r}" if rv.stdout else "",
+            f"stderr={rv.stderr.strip()!r}" if rv.stderr else "",
+        ]
+        if part
+    )
+    raise RuntimeError(f"wezterm {action} failed: {detail}")
+
+
 def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
     _debug_timing(f"list_pane_ids start workspace={workspace}")
     rv = subprocess.run(
@@ -241,7 +254,8 @@ def _list_pane_ids_in(wezterm_exe: Path, workspace: str) -> List[int]:
         timeout=15,
         stdin=subprocess.DEVNULL,
     )
-    rv.check_returncode()
+    if rv.returncode != 0:
+        _raise_cli_error("list", rv)
     _debug_timing(f"list_pane_ids done workspace={workspace}")
     return [int(pane["pane_id"]) for pane in lookup_pane(parse_wezterm_list(rv.stdout), workspace=workspace)]
 
@@ -291,7 +305,8 @@ def launch_workspace(
         timeout=30,
         stdin=subprocess.DEVNULL,
     )
-    rv.check_returncode()
+    if rv.returncode != 0:
+        _raise_cli_error("spawn claude", rv)
     _debug_timing("launch_workspace:spawn claude done")
     claude_id = _parse_pane_id(rv.stdout)
     if claude_id is None:
@@ -316,7 +331,8 @@ def launch_workspace(
         timeout=30,
         stdin=subprocess.DEVNULL,
     )
-    rv2.check_returncode()
+    if rv2.returncode != 0:
+        _raise_cli_error("split codex", rv2)
     _debug_timing("launch_workspace:split codex done")
     codex_id = _parse_pane_id(rv2.stdout)
     if codex_id is None:
