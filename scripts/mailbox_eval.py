@@ -905,6 +905,9 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             "--format",
             "json",
         ]
+        synthetic = scenario.get("synthetic_action")
+        if launch_real and synthetic:
+            launch_real = False
         if launch_real:
             try:
                 task_id, launch, wezterm_exe = _start_real_task(mailbox_root, project, scenario, context_path)
@@ -918,7 +921,6 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
                 return result
             task_id = json.loads(rv.stdout)["data"]["task_id"]
         if not launch_real:
-            synthetic = scenario.get("synthetic_action")
             if synthetic:
                 status, notes = _run_synthetic_action(mailbox_root, task_id, scenario, synthetic)
                 result = ScenarioResult(scenario["id"], scenario["name"], tier, status, notes, str(work_root), task_id)

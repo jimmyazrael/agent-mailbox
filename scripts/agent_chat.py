@@ -11,7 +11,7 @@ from mailbox_lib import TERMINAL_STATUSES, VALID_MESSAGE_STATUSES, VALID_ROOM_ST
 SCHEMA_VERSION = 2
 INLINE_BODY_THRESHOLD_BYTES = 4096
 ALLOWED_ROOM_STATE_KEYS = frozenset({"limits", "usage", "tags", "goal_metadata", "session_log_safety", "relay_launch"})
-PROTOCOL_OWNER_RE = re.compile(r"(?im)^[ \t]*Owner[ \t]*:[ \t]*([^\r\n]*)[ \t]*$")
+PROTOCOL_OWNER_RE = re.compile(r"(?im)^[ \t]*(?:[-*+][ \t]+)?[*_]{0,2}Owner[*_]{0,2}[ \t]*:[ \t]*([^\r\n]*?)[ \t]*$")
 
 DDL = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -318,10 +318,11 @@ def owner_from_protocol(body: str) -> Optional[str]:
     match = PROTOCOL_OWNER_RE.search(body or "")
     if not match:
         return None
-    owner = match.group(1).strip().lower()
-    if owner in {"", "none", "n/a", "na", "-"}:
+    raw = match.group(1).strip().strip("*_`").strip()
+    first = re.split(r"[\s,—–\-:]+", raw, maxsplit=1)[0].strip("*_`").lower()
+    if first in {"", "none", "n/a", "na"}:
         return None
-    return owner
+    return first
 
 
 def _next_turn_from_continue(

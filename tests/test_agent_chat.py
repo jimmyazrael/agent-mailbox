@@ -343,6 +343,19 @@ def test_owner_from_protocol_handles_none_and_case():
     assert owner_from_protocol("no owner") is None
 
 
+def test_owner_from_protocol_handles_markdown_forms():
+    assert owner_from_protocol("**Owner:** codex") == "codex"
+    assert owner_from_protocol("Owner: **codex**") == "codex"
+    assert owner_from_protocol("  - **Owner:** codex") == "codex"
+    assert owner_from_protocol("*Owner*: codex") == "codex"
+    assert owner_from_protocol("+ Owner: claude") == "claude"
+    assert owner_from_protocol("Owner: codex - writes the next outbox") == "codex"
+    assert owner_from_protocol("Owner: codex — writes the next outbox") == "codex"
+    assert owner_from_protocol("Owner: codex, then claude reviews") == "codex"
+    assert owner_from_protocol("  - Owner: codex (action owner)") == "codex"
+    assert owner_from_protocol("Some prose mentioning Owner: codex on the same line") is None
+
+
 def test_send_message_rolls_back_artifact_on_db_failure(tmp_path, monkeypatch):
     conn = _setup(tmp_path)
     real_execute = conn.execute
