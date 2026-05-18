@@ -640,44 +640,6 @@ def cmd_init(args) -> int:
     return _emit(args, ok=True, data=_init_task(args, root))
 
 
-def _manual_prompt(*, agent: str, root: Path, task_id: str) -> str:
-    return (
-        f"Use agent-mailbox task {task_id}. "
-        f"Read the mailbox with: python {Path(__file__).resolve()} show --root {root} --task-id {task_id} --tail 1 --body --format json. "
-        f"When it is your turn, write your reply to {root / task_id / 'outbox' / agent} using the documented outbox Markdown format."
-    )
-
-
-def cmd_review_init(args) -> int:
-    root = _root(args)
-    data = _init_task(args, root)
-    task_id = data["task_id"]
-    chat_cmd = [
-        sys.executable,
-        str(Path(__file__).resolve()),
-        "watch-chat",
-        "--root",
-        str(root),
-        "--task-id",
-        task_id,
-    ]
-    data.update(
-        {
-            "mode": "manual_review",
-            "chat_monitor_command": chat_cmd,
-            "outbox": {
-                "claude": str(root / task_id / "outbox" / "claude"),
-                "codex": str(root / task_id / "outbox" / "codex"),
-            },
-            "prompts": {
-                "claude": _manual_prompt(agent="claude", root=root, task_id=task_id),
-                "codex": _manual_prompt(agent="codex", root=root, task_id=task_id),
-            },
-        }
-    )
-    return _emit(args, ok=True, data=data)
-
-
 def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
     root = _root(args)
     conn = connect_db(root)
@@ -2182,22 +2144,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--context")
     p.add_argument("--context-file", type=Path)
     p.set_defaults(func=cmd_init)
-
-    p = sub.add_parser("review-init", help="create a pane-free manual review mailbox")
-    _common(p)
-    p.add_argument("--task-id")
-    p.add_argument("--prefix", required=True)
-    p.add_argument("--label", default="")
-    p.add_argument("--goal", required=True)
-    p.add_argument("--project-cwd", required=True)
-    p.add_argument("--first-turn", choices=["claude", "codex"], default="claude")
-    p.add_argument("--tag", action="append")
-    p.add_argument("--parent-task-id")
-    p.add_argument("--exit-condition")
-    p.add_argument("--max-rounds", type=int, default=30)
-    p.add_argument("--context")
-    p.add_argument("--context-file", type=Path)
-    p.set_defaults(func=cmd_review_init)
 
     p = sub.add_parser("start")
     _common(p)

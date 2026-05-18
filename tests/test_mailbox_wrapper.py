@@ -704,41 +704,6 @@ def test_watch_chat_emits_existing_messages_without_mutating_state(tmp_path):
     assert after_messages == before_messages
 
 
-def test_review_init_creates_pane_free_manual_mailbox(tmp_path):
-    root = tmp_path / "mb"
-    rv = _run(
-        "review-init",
-        "--root",
-        str(root),
-        "--prefix",
-        "rev",
-        "--goal",
-        "manual review",
-        "--project-cwd",
-        str(tmp_path),
-        "--context",
-        "manual bootstrap",
-        "--format",
-        "json",
-    )
-    assert rv.returncode == 0, rv.stderr
-    data = json.loads(rv.stdout)["data"]
-    task_id = data["task_id"]
-    assert data["mode"] == "manual_review"
-    assert data["chat_monitor_command"][2] == "watch-chat"
-    assert data["outbox"]["claude"].endswith(f"{task_id}\\outbox\\claude") or data["outbox"]["claude"].endswith(f"{task_id}/outbox/claude")
-    assert "write your reply" in data["prompts"]["claude"]
-    assert task_id in data["prompts"]["codex"]
-    assert (root / task_id / "outbox" / "claude").is_dir()
-    assert (root / task_id / "outbox" / "codex").is_dir()
-    conn = connect_db(root)
-    try:
-        assert conn.execute("SELECT COUNT(*) FROM panes WHERE room_id=?", (task_id,)).fetchone()[0] == 0
-        assert conn.execute("SELECT body_text FROM messages WHERE room_id=? AND kind='system'", (task_id,)).fetchone()["body_text"] == "manual bootstrap"
-    finally:
-        conn.close()
-
-
 def test_watch_chat_from_message_id_emits_only_newer_messages(tmp_path):
     root = tmp_path / "mb"
     init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
