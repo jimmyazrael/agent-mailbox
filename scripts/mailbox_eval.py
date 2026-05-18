@@ -18,7 +18,7 @@ from typing import Any
 from agent_chat import add_participant, connect_db, export_transcript_md, init_room, send_message, set_pane
 from mailbox_lib import pid_exists
 from outbox import SENTINEL
-from pane_control import build_activate_pane_argv, build_get_text_argv, build_list_argv, build_send_text_argv, build_spawn_argv, build_split_argv
+from pane_control import build_activate_pane_argv, build_get_text_argv, build_list_argv, build_send_text_argv
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 MAILBOX = SKILL_ROOT / "scripts" / "mailbox.py"
@@ -80,10 +80,6 @@ def _command_error(rv: subprocess.CompletedProcess[str]) -> str:
     if rv.stdout:
         parts.append(rv.stdout.strip())
     return "\n".join(part for part in parts if part) or f"command failed with rc={rv.returncode}"
-
-
-def _is_no_space_for_split(rv: subprocess.CompletedProcess[str]) -> bool:
-    return "no space for split" in f"{rv.stderr}\n{rv.stdout}".lower()
 
 
 def _get_pane_text(wezterm_exe: Path, pane_id: int) -> str:
@@ -457,49 +453,15 @@ def _launch_relay_pane(
     project: Path,
     relay_cmd: list[str],
 ) -> tuple[int | None, str]:
-    split_rv = subprocess.run(
-        build_split_argv(
-            wezterm_exe=wezterm_exe,
-            source_pane_id=codex_pane_id,
-            direction="bottom",
-            percent=25,
-            cwd=project,
-            cmd=relay_cmd,
-        ),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        stdin=subprocess.DEVNULL,
+    from mailbox import launch_relay_pane_with_fallback
+
+    return launch_relay_pane_with_fallback(
+        wezterm_exe=wezterm_exe,
+        workspace=workspace,
+        codex_pane_id=codex_pane_id,
+        project=project,
+        relay_cmd=relay_cmd,
     )
-    if split_rv.returncode == 0:
-        return _pane_id_from_stdout(split_rv), "split"
-    if not _is_no_space_for_split(split_rv):
-        raise RuntimeError(_command_error(split_rv))
-
-    spawn_rv = subprocess.run(
-        build_spawn_argv(
-            wezterm_exe=wezterm_exe,
-            workspace=workspace,
-            cwd=project,
-            cmd=relay_cmd,
-        ),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=30,
-        stdin=subprocess.DEVNULL,
-    )
-    if spawn_rv.returncode != 0:
-        raise RuntimeError(_command_error(spawn_rv))
-    return _pane_id_from_stdout(spawn_rv), "spawn"
-
-
-def _pane_id_from_stdout(rv: subprocess.CompletedProcess[str]) -> int | None:
-    text = rv.stdout.strip()
-    return int(text) if text.isdigit() else None
 
 
 def _build_v2_relay_cmd(*, task_id: str, mailbox_root: Path, project: Path, relay_max_iters: int) -> list[str]:

@@ -489,6 +489,74 @@ def _spawn_workspace_tab(
     return int(text) if text.isdigit() else None
 
 
+def _command_error(rv: subprocess.CompletedProcess[str]) -> str:
+    parts = []
+    if rv.stderr:
+        parts.append(rv.stderr.strip())
+    if rv.stdout:
+        parts.append(rv.stdout.strip())
+    return "\n".join(part for part in parts if part) or f"command failed with rc={rv.returncode}"
+
+
+def _is_no_space_for_split(rv: subprocess.CompletedProcess[str]) -> bool:
+    return "no space for split" in f"{rv.stderr}\n{rv.stdout}".lower()
+
+
+def _pane_id_from_stdout(rv: subprocess.CompletedProcess[str]) -> int | None:
+    text = rv.stdout.strip()
+    return int(text) if text.isdigit() else None
+
+
+def launch_relay_pane_with_fallback(
+    *,
+    wezterm_exe: Path,
+    workspace: str,
+    codex_pane_id: int,
+    project: Path,
+    relay_cmd: list[str],
+) -> tuple[int | None, str]:
+    from pane_control import build_spawn_argv, build_split_argv
+
+    split_rv = subprocess.run(
+        build_split_argv(
+            wezterm_exe=wezterm_exe,
+            source_pane_id=codex_pane_id,
+            direction="bottom",
+            percent=25,
+            cwd=project,
+            cmd=relay_cmd,
+        ),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        stdin=subprocess.DEVNULL,
+    )
+    if split_rv.returncode == 0:
+        return _pane_id_from_stdout(split_rv), "split"
+    if not _is_no_space_for_split(split_rv):
+        raise RuntimeError(_command_error(split_rv))
+
+    spawn_rv = subprocess.run(
+        build_spawn_argv(
+            wezterm_exe=wezterm_exe,
+            workspace=workspace,
+            cwd=project,
+            cmd=relay_cmd,
+        ),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        stdin=subprocess.DEVNULL,
+    )
+    if spawn_rv.returncode != 0:
+        raise RuntimeError(_command_error(spawn_rv))
+    return _pane_id_from_stdout(spawn_rv), "spawn"
+
+
 def _init_task(args, root: Path) -> dict[str, Any]:
     init_db(root)
     task_id = args.task_id or generate_task_id(args.prefix, args.label or "")
@@ -610,6 +678,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             parts = [int(x.strip()) for x in fake.split(",")]
             result = {"workspace": workspace, "claude_pane_id": parts[0], "codex_pane_id": parts[1], "spawned_at": utc_now()}
             relay_pane_id = parts[2] if launch_relay and len(parts) > 2 else None
+            relay_launch_method = "fake" if relay_pane_id is not None else None
             chat_pane_id = parts[3] if getattr(args, "with_chat", False) and len(parts) > 3 else None
             control_pane_id = parts[4] if getattr(args, "with_control_panel", False) and len(parts) > 4 else None
         else:
@@ -663,9 +732,8 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                 codex_pane_id=int(result["codex_pane_id"]),
             )
             _debug_timing(f"validate_workspace_startup done ready={startup.get('ready')}")
+            relay_launch_method = None
             if launch_relay:
-                from pane_control import build_split_argv
-
                 if startup["ready"]:
                     relay_cmd = [
                         "cmd",
@@ -678,22 +746,13 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
                     ]
                     if getattr(args, "max_iters", None) is not None:
                         relay_cmd.append(str(args.max_iters))
-                    rv = subprocess.run(
-                        build_split_argv(
-                            wezterm_exe=wez,
-                            source_pane_id=result["codex_pane_id"],
-                            direction="bottom",
-                            percent=25,
-                            cwd=project_cwd,
-                            cmd=relay_cmd,
-                        ),
-                        capture_output=True,
-                        text=True,
-                        stdin=subprocess.DEVNULL,
+                    relay_pane_id, relay_launch_method = launch_relay_pane_with_fallback(
+                        wezterm_exe=wez,
+                        workspace=workspace,
+                        codex_pane_id=int(result["codex_pane_id"]),
+                        project=project_cwd,
+                        relay_cmd=relay_cmd,
                     )
-                    rv.check_returncode()
-                    text = rv.stdout.strip()
-                    relay_pane_id = int(text) if text.isdigit() else None
                 else:
                     conn.execute("BEGIN IMMEDIATE")
                     conn.execute(
@@ -737,7 +796,7 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
         if control_pane_id is not None:
             set_pane(conn, task_id, "control", pane_id=control_pane_id)
         if relay_pane_id is not None:
-            room_state_set(conn, task_id, "relay_launch", {"method": "split", "pane_id": relay_pane_id})
+            room_state_set(conn, task_id, "relay_launch", {"method": relay_launch_method or "unknown", "pane_id": relay_pane_id})
         from codex_session_discovery import find_codex_session_id
 
         sessions_dir = os.environ.get("AGENT_MAILBOX_CODEX_SESSIONS_DIR")

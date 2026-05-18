@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_chat import connect_db, init_db, send_message
+from agent_chat import connect_db, init_db, room_state_get, send_message
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 MAILBOX = SKILL_ROOT / "scripts" / "mailbox.py"
@@ -455,6 +455,74 @@ def test_startup_gate_pauses_relay_when_agent_pane_not_ready(monkeypatch, tmp_pa
     assert relay["paused"] == 1
     assert relay["pause_reason"] == "startup_not_ready:claude=ready,codex=update_prompt"
     assert not any("launch_relay_pane.cmd" in " ".join(call) for call in split_calls)
+
+
+def test_start_relay_fallback_records_actual_spawn_method(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    launched_workspace = None
+    calls = []
+
+    def fake_launch_workspace(**kwargs):
+        nonlocal launched_workspace
+        launched_workspace = kwargs["workspace"]
+        return {"workspace": kwargs["workspace"], "claude_pane_id": 11, "codex_pane_id": 12, "spawned_at": "now"}
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 0, json.dumps([{"pane_id": 11, "workspace": launched_workspace or "w", "window_id": 99}]), "")
+        if "split-pane" in argv:
+            return subprocess.CompletedProcess(argv, 1, "", "Error: No space for split!")
+        if "spawn" in argv:
+            return subprocess.CompletedProcess(argv, 0, "55\n", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr("tui_launcher.find_codex", lambda: None)
+    monkeypatch.setattr("tui_launcher.ensure_mux_alive", lambda *args, **kwargs: None)
+    monkeypatch.setattr("tui_launcher.launch_workspace", fake_launch_workspace)
+    monkeypatch.setattr(
+        "tui_launcher.validate_workspace_startup",
+        lambda **kwargs: {
+            "ready": True,
+            "visible": True,
+            "agents": {"claude": {"state": "ready"}, "codex": {"state": "ready"}},
+        },
+    )
+    monkeypatch.setattr("tui_launcher.attach_workspace_gui", lambda *args, **kwargs: None)
+    monkeypatch.setattr("codex_session_discovery.find_codex_session_id", lambda **kwargs: {"session_id": None, "status": "failed", "scanned_files": 0, "attempted_at": "now"})
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    import mailbox as mailbox_cli
+
+    args = mailbox_cli.build_parser().parse_args(
+        [
+            "start",
+            "--root",
+            str(root),
+            "--prefix",
+            "t",
+            "--goal",
+            "g",
+            "--project-cwd",
+            str(tmp_path),
+            "--no-chat",
+            "--no-control-panel",
+            "--format",
+            "json",
+        ]
+    )
+    assert mailbox_cli.cmd_start(args) == 0
+    conn = connect_db(root)
+    try:
+        task_id = conn.execute("SELECT id FROM rooms").fetchone()["id"]
+        relay = conn.execute("SELECT pane_id FROM panes WHERE room_id=? AND pane_role='relay'", (task_id,)).fetchone()
+        assert relay["pane_id"] == 55
+        assert room_state_get(conn, task_id, "relay_launch") == {"method": "spawn", "pane_id": 55}
+    finally:
+        conn.close()
+    assert any("split-pane" in call for call in calls)
+    assert any("spawn" in call for call in calls)
 
 
 def test_start_warns_about_stale_workspaces_without_reaping(monkeypatch, tmp_path, capsys):
