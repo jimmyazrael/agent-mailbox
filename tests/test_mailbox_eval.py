@@ -226,6 +226,136 @@ def test_am04_rediscovery_requires_codex_outbox_after_rediscovery():
     assert "after rediscovery runs" in data["context"]
 
 
+def test_launch_relay_pane_uses_split_when_geometry_fits(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "33\n", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    pane_id, method = mailbox_eval._launch_relay_pane(
+        wezterm_exe=Path("wezterm"),
+        workspace="agent-mailbox-t1",
+        codex_pane_id=12,
+        project=tmp_path,
+        relay_cmd=["relay"],
+    )
+    assert pane_id == 33
+    assert method == "split"
+    assert len(calls) == 1
+    assert "split-pane" in calls[0]
+
+
+def test_launch_relay_pane_falls_back_to_spawn_on_no_space_for_split(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if "split-pane" in argv:
+            return subprocess.CompletedProcess(argv, 1, "", "Error: No space for split!")
+        return subprocess.CompletedProcess(argv, 0, "44\n", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    pane_id, method = mailbox_eval._launch_relay_pane(
+        wezterm_exe=Path("wezterm"),
+        workspace="agent-mailbox-t1",
+        codex_pane_id=12,
+        project=tmp_path,
+        relay_cmd=["relay"],
+    )
+    assert pane_id == 44
+    assert method == "spawn"
+    assert "split-pane" in calls[0]
+    assert calls[1][1:4] == ["cli", "--prefer-mux", "spawn"]
+    assert "--workspace" in calls[1]
+    assert "agent-mailbox-t1" in calls[1]
+
+
+def test_launch_relay_pane_propagates_other_split_errors(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 1, "", "auth error")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    try:
+        mailbox_eval._launch_relay_pane(
+            wezterm_exe=Path("wezterm"),
+            workspace="agent-mailbox-t1",
+            codex_pane_id=12,
+            project=tmp_path,
+            relay_cmd=["relay"],
+        )
+    except RuntimeError as exc:
+        assert "auth error" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+    assert len(calls) == 1
+    assert "spawn" not in calls[0]
+
+
+def test_launch_relay_pane_propagates_other_spawn_errors(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if "split-pane" in argv:
+            return subprocess.CompletedProcess(argv, 1, "", "No space for split!")
+        return subprocess.CompletedProcess(argv, 1, "", "mux error")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    try:
+        mailbox_eval._launch_relay_pane(
+            wezterm_exe=Path("wezterm"),
+            workspace="agent-mailbox-t1",
+            codex_pane_id=12,
+            project=tmp_path,
+            relay_cmd=["relay"],
+        )
+    except RuntimeError as exc:
+        assert "mux error" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError")
+    assert "split-pane" in calls[0]
+    assert "spawn" in calls[1]
+
+
+def test_start_real_task_records_relay_launch_method(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run_mailbox(*args, **kwargs):
+        calls.append(args)
+        if args[0] == "init":
+            return subprocess.CompletedProcess(args, 0, json.dumps({"data": {"task_id": "t1"}}), "")
+        if args[0] == "launch-tui":
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                json.dumps({"data": {"workspace": "agent-mailbox-t1", "claude_pane_id": 1, "codex_pane_id": 2}}),
+                "",
+            )
+        return subprocess.CompletedProcess(args, 0, '{"ok": true}', "")
+
+    monkeypatch.setattr(mailbox_eval, "_run_mailbox", fake_run_mailbox)
+    monkeypatch.setattr(mailbox_eval, "_accept_trust_prompt", lambda *args, **kwargs: False)
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: Path("wezterm"))
+    monkeypatch.setattr(mailbox_eval, "_launch_relay_pane", lambda **kwargs: (55, "spawn"))
+
+    task_id, launch, wezterm_exe = mailbox_eval._start_real_task(
+        tmp_path / "mb",
+        tmp_path / "project",
+        {"id": "AM-X", "name": "x", "goal": "g", "timeout_seconds": 10},
+        tmp_path / "context.md",
+    )
+    assert task_id == "t1"
+    assert wezterm_exe == Path("wezterm")
+    assert launch["relay_pane_id"] == 55
+    assert launch["relay_launch_method"] == "spawn"
+    assert any(call[0] == "repair" and "--rebind-pane" in call for call in calls)
+
+
 def test_mailbox_eval_reports_paused_relay_reason(tmp_path):
     root = tmp_path / "mb"
     init_db(root)
