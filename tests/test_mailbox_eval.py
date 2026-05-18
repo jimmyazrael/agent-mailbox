@@ -215,6 +215,19 @@ def test_am05_requires_codex_final_participation():
     assert "Claude-only final is a scenario failure" in data["context"] or "Claude final is a scenario failure" in data["context"]
 
 
+def test_am07_requires_single_continue_per_agent_and_claude_final():
+    data = json.loads((SCENARIOS / "07-mid-handoff-duplicate-trigger.json").read_text(encoding="utf-8"))
+    success = data["success"]
+    assert success["final_from_agent"] == "claude"
+    assert success["max_messages"] == 4
+    assert success["required_outbox_statuses_by_author"]["claude"] == ["continue", "final"]
+    assert success["required_outbox_statuses_by_author"]["codex"] == ["continue"]
+    assert "Claude writes exactly one continue" in data["context"]
+    assert "Codex must write exactly one continue confirmation" in data["context"]
+    assert "Claude must write the only final" in data["context"]
+    assert "Additional ping-pong continue messages are scenario failures" in data["context"] or "Additional continue messages are scenario failures" in data["context"]
+
+
 def test_real_conversation_scenarios_require_participation_contracts():
     audited = ["AM-03", "AM-04", "AM-05", "AM-06", "AM-07", "AM-09", "AM-11", "AM-12"]
     by_id = {json.loads(path.read_text(encoding="utf-8"))["id"]: json.loads(path.read_text(encoding="utf-8")) for path in SCENARIOS.glob("*.json")}

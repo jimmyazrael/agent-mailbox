@@ -10,7 +10,7 @@
   "workspace_files": {
     "README.md": "# Mid-Handoff Duplicate Doorbell\n\nThis scenario forces a non-terminal handoff before final. Duplicate doorbells may fire while the next agent is active.\n"
   },
-  "context": "You are testing duplicate-doorbell resilience under v2. A duplicate doorbell may fire for the same latest state while a peer turn is active. Respond to each requested turn exactly once by writing one completed outbox file. Required flow: Claude first asks Codex to confirm duplicate-doorbell handling; Codex writes exactly one confirmation; Claude then writes final. The final answer should mention mid-handoff duplicate doorbell resilience.",
+  "context": "You are testing duplicate-doorbell resilience under v2. A duplicate doorbell may fire for the same latest state while a peer turn is active. Required flow: Claude writes exactly one continue outbox to Codex instructing Codex to write exactly one continue confirmation and then stop. Codex must write exactly one continue confirmation and must not write additional outboxes unless a new user injection arrives. Claude must write the only final outbox after Codex's confirmation. Additional ping-pong continue messages are scenario failures. The final answer must mention mid-handoff duplicate doorbell resilience.",
   "extra_doorbells": 1,
   "success": {
     "required_outbox_authors": [
