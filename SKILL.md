@@ -197,6 +197,38 @@ The outbox importer rejects malformed files. Treat a malformed-outbox pause as a
 
 If two possible numbering systems collide in a discussion, prefer the mailbox message id plus the scenario/task id over conversational round numbers. For example, say `AM-07 message 4` rather than `the second 4th item`.
 
+### Authorization State Protocol
+
+For agent-mailbox development or any multi-item agent-to-agent task, use this state model. Do not start implementation from critique alone.
+
+```text
+DISCUSS    - open critique. Either party raises issues. No commits.
+PROPOSE    - one party drafts a named subset. Other party reviews. No commits.
+AUTHORIZE  - user explicitly names the subset to implement.
+EXECUTE    - owner makes commits. Use one commit per authorized item unless the user says otherwise.
+REVIEW     - reviewer checks the commit against the acceptance checklist before the next item starts.
+DONE       - terminal. New work requires fresh AUTHORIZE.
+```
+
+Valid authorization examples:
+
+```text
+Authorized: A, B, E from the proposal.
+I pick Option 2.
+Implement C only.
+```
+
+Ambiguous phrases like "sounds good", "continue", or "standing down" are not implementation authorization. Treat `DONE` or "standing down" as terminal, not as permission to work parked backlog.
+
+First-pass acceptance checklist for reviewers:
+
+- Diff matches the authorized scope; no drive-by changes.
+- Required tests pass, or missing tests are explicitly justified.
+- Documentation matches behavior.
+- Names are honest: a scenario or command name describes what it actually exercises.
+- No silent failure paths were introduced.
+- For hard scenarios, the contract is artifact-anchored and exercises what the scenario name implies.
+
 ## Migrating From v1
 
 Current mailbox databases use schema version 2. Opening a database with an absent, older, or newer schema version fails with `schema_version_mismatch` instead of auto-migrating.
