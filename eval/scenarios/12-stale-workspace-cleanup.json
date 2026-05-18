@@ -12,6 +12,7 @@
     "result.txt": "pending\n"
   },
   "context": "Exercise the stale workspace cleanup workflow. Required flow: Claude verifies that active workspaces are preserved, terminal or orphaned workspaces are listed in dry-run mode, destructive cleanup requires explicit confirmation, writes STALE-WORKSPACE-PASS to result.txt, and sends a continue outbox to Codex; Codex reviews the safety behavior and writes the final outbox. Mark final only after both agents agree via outbox messages.",
+  "synthetic_action": "stale_workspace_cleanup_runtime",
   "success": {
     "required_outbox_authors": [
       "claude",

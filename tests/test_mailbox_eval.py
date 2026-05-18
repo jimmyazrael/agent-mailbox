@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 import mailbox_eval
-from agent_chat import add_participant, connect_db, init_db, init_room, send_message, set_pane
+from agent_chat import add_participant, connect_db, init_db, init_room, room_state_get, send_message, set_pane
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 MAILBOX_EVAL = SKILL_ROOT / "scripts" / "mailbox_eval.py"
@@ -352,6 +352,13 @@ def test_start_real_task_records_relay_launch_method(monkeypatch, tmp_path):
     def fake_run_mailbox(*args, **kwargs):
         calls.append(args)
         if args[0] == "init":
+            root = Path(args[args.index("--root") + 1])
+            init_db(root)
+            conn = connect_db(root)
+            init_room(conn, room_id="t1", name="T1", purpose="p", project_cwd=tmp_path / "project", workspace="agent-mailbox-t1", first_turn="claude")
+            add_participant(conn, "t1", "claude")
+            add_participant(conn, "t1", "codex")
+            conn.close()
             return subprocess.CompletedProcess(args, 0, json.dumps({"data": {"task_id": "t1"}}), "")
         if args[0] == "launch-tui":
             return subprocess.CompletedProcess(
@@ -378,6 +385,11 @@ def test_start_real_task_records_relay_launch_method(monkeypatch, tmp_path):
     assert launch["relay_pane_id"] == 55
     assert launch["relay_launch_method"] == "spawn"
     assert any(call[0] == "repair" and "--rebind-pane" in call for call in calls)
+    conn = connect_db(tmp_path / "mb")
+    try:
+        assert room_state_get(conn, "t1", "relay_launch") == {"method": "spawn", "pane_id": 55}
+    finally:
+        conn.close()
 
 
 def test_mailbox_eval_reports_paused_relay_reason(tmp_path):
@@ -403,7 +415,7 @@ def test_mailbox_eval_failed_real_run_stops_task(monkeypatch, tmp_path):
 
     monkeypatch.setattr(mailbox_eval, "_start_real_task", fake_start)
     monkeypatch.setattr(mailbox_eval, "_poll_to_terminal", lambda *args, **kwargs: ("timeout", False))
-    monkeypatch.setattr(mailbox_eval, "_capture_pane_snapshots", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mailbox_eval, "_capture_pane_snapshots", lambda *args, **kwargs: {"1": "pane-1.txt"})
     monkeypatch.setattr(mailbox_eval, "_run_mailbox", fake_run_mailbox)
     result = mailbox_eval.run_scenario(
             {
@@ -444,7 +456,7 @@ def test_mailbox_eval_participation_validation_uses_open_connection(monkeypatch,
 
     monkeypatch.setattr(mailbox_eval, "_start_real_task", fake_start)
     monkeypatch.setattr(mailbox_eval, "_poll_to_terminal", lambda *args, **kwargs: ("final", False))
-    monkeypatch.setattr(mailbox_eval, "_capture_pane_snapshots", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mailbox_eval, "_capture_pane_snapshots", lambda *args, **kwargs: {"1": "pane-1.txt"})
     result = mailbox_eval.run_scenario(
         {
             "id": "AM-X",
@@ -464,6 +476,19 @@ def test_mailbox_eval_participation_validation_uses_open_connection(monkeypatch,
         launch_real=True,
     )
     assert result.status == "pass"
+    assert result.artifacts == {"pane_snapshots": {"1": "pane-1.txt"}}
+
+
+def test_mailbox_eval_am12_exercises_cleanup_runtime():
+    rv = subprocess.run(
+        [sys.executable, str(MAILBOX_EVAL), "--scenario", "AM-12"],
+        capture_output=True,
+        text=True,
+    )
+    assert rv.returncode == 0, rv.stderr
+    result = json.loads(rv.stdout)
+    assert result["scenario_id"] == "AM-12"
+    assert result["status"] == "pass"
 
 
 def test_stop_real_task_reports_post_stop_mux_timeout(monkeypatch, tmp_path):

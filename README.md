@@ -191,6 +191,8 @@ python scripts\mailbox.py stop --root <root> --task-id <id>
 
 Add `--close-panes --yes` only when you also want the WezTerm panes closed. The control panel intentionally does not expose close-panes as a single-key action.
 
+If pane cleanup reports `vanished_after_failure`, the pane kill timed out but a follow-up WezTerm list no longer showed that pane. If the follow-up list itself fails, Agent Mailbox keeps the pane in the failure set and includes `absence_check` so you know the result is uncertain rather than silently treating it as gone.
+
 ## Validation
 
 Current scenario coverage includes hard real Claude/Codex/WezTerm cases for context bootstrap, blocked-state injection, duplicate doorbells, Codex rediscovery, context overload, passive consensus, and mid-handoff duplicate-doorbell resilience.
@@ -215,4 +217,18 @@ Run the real GUI startup smoke before dogfooding important work:
 ```powershell
 $env:AGENT_MAILBOX_RUN_REAL_SMOKE = "1"
 pytest tests\test_real_agents_smoke.py -q -m real_agents
+```
+
+Run the prompt-delivery smoke before changing relay send-text behavior:
+
+```powershell
+python scripts\prompt_delivery_smoke.py --format json
+```
+
+Real scenario runs capture pane snapshots as first-class artifacts under the scenario work root. Scenario contracts should assert observable artifacts such as files, transcript terms, outbox authors/statuses, pause reasons, cleanup dry-run output, or pane snapshots; agent assertions alone are not strong enough for gating important work.
+
+PowerShell note: quote peeled tag refs when verifying annotated tags:
+
+```powershell
+git rev-parse --short "v2.0^{}"
 ```

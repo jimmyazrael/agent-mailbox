@@ -237,6 +237,21 @@ def _pane_absent_after_failure(*, wezterm_exe: Path, pane_id: int) -> bool:
     return all(int(pane.get("pane_id", -1)) != int(pane_id) for pane in panes)
 
 
+def _pane_absence_status_after_failure(*, wezterm_exe: Path, pane_id: int) -> tuple[bool, str | None]:
+    from pane_control import build_list_argv
+    from tui_launcher import parse_wezterm_list, run_wezterm_cli
+
+    rv = run_wezterm_cli(build_list_argv(wezterm_exe=wezterm_exe), timeout=5)
+    if rv.returncode != 0:
+        return False, f"follow_up_list_failed:rc={rv.returncode}"
+    try:
+        panes = parse_wezterm_list(rv.stdout)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        return False, f"follow_up_list_unparseable:{type(exc).__name__}"
+    absent = all(int(pane.get("pane_id", -1)) != int(pane_id) for pane in panes)
+    return absent, None if absent else "pane_still_listed_after_failure"
+
+
 def _kill_bound_panes(*, wezterm_exe: Path, pane_ids: list[int]) -> tuple[list[dict[str, Any]], list[int], list[int], list[dict[str, Any]]]:
     from pane_control import build_kill_pane_argv
     from tui_launcher import run_wezterm_cli
@@ -261,12 +276,31 @@ def _kill_bound_panes(*, wezterm_exe: Path, pane_ids: list[int]) -> tuple[list[d
             killed_panes.append(pane_id)
         elif _pane_gone(result["stderr"]):
             already_gone_panes.append(pane_id)
-        elif _pane_kill_timed_out(result) and _pane_absent_after_failure(wezterm_exe=wezterm_exe, pane_id=pane_id):
-            result["vanished_after_failure"] = True
-            already_gone_panes.append(pane_id)
+        elif _pane_kill_timed_out(result):
+            absent, reason = _pane_absence_status_after_failure(wezterm_exe=wezterm_exe, pane_id=pane_id)
+            result["vanished_after_failure"] = absent
+            if reason:
+                result["absence_check"] = reason
+            if absent:
+                already_gone_panes.append(pane_id)
+            else:
+                failed_panes.append(result)
         else:
             failed_panes.append(result)
     return pane_results, killed_panes, already_gone_panes, failed_panes
+
+
+def _pane_cleanup_summary(pane_results: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "vanished_after_failure_pane_ids": [
+            int(row["pane_id"]) for row in pane_results if row.get("vanished_after_failure") is True
+        ],
+        "uncertain_after_failure": [
+            {"pane_id": int(row["pane_id"]), "absence_check": row.get("absence_check")}
+            for row in pane_results
+            if row.get("vanished_after_failure") is False and row.get("absence_check")
+        ],
+    }
 
 
 def _mux_health_after_cleanup(wezterm_exe: Path) -> dict[str, Any]:
@@ -702,6 +736,8 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             set_pane(conn, task_id, "chat", pane_id=chat_pane_id)
         if control_pane_id is not None:
             set_pane(conn, task_id, "control", pane_id=control_pane_id)
+        if relay_pane_id is not None:
+            room_state_set(conn, task_id, "relay_launch", {"method": "split", "pane_id": relay_pane_id})
         from codex_session_discovery import find_codex_session_id
 
         sessions_dir = os.environ.get("AGENT_MAILBOX_CODEX_SESSIONS_DIR")
@@ -1265,6 +1301,7 @@ def cmd_status(args) -> int:
             row["agent"]: dict(row)
             for row in conn.execute("SELECT * FROM agent_sessions WHERE room_id=?", (task_id,)).fetchall()
         }
+        relay_launch = room_state_get(conn, task_id, "relay_launch", default=None)
         panes = {row["pane_role"]: row["pane_id"] for row in conn.execute("SELECT * FROM panes WHERE room_id=?", (task_id,))}
         watcher_alive = pid_exists(relay["watcher_pid"])
         watcher_dead_with_running_state = bool(
@@ -1302,6 +1339,7 @@ def cmd_status(args) -> int:
             "pending_user_injections": pending_user_injections,
             "panes": panes,
             "codex_discovery_status": sessions.get("codex", {}).get("discovery_status"),
+            "relay_launch": relay_launch,
         }
     finally:
         conn.close()
@@ -1941,6 +1979,7 @@ def cmd_stop(args) -> int:
             "task_id": task_id,
             "status": "stopped",
             "pane_results": pane_results,
+            "pane_cleanup_summary": _pane_cleanup_summary(pane_results),
             "killed_pane_ids": killed_panes,
             "already_gone_pane_ids": already_gone_panes,
             "killed_process_ids": killed_processes,
@@ -2200,6 +2239,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    if os.name == "nt":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

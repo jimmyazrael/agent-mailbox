@@ -10,7 +10,7 @@ from mailbox_lib import TERMINAL_STATUSES, VALID_MESSAGE_STATUSES, VALID_ROOM_ST
 
 SCHEMA_VERSION = 2
 INLINE_BODY_THRESHOLD_BYTES = 4096
-ALLOWED_ROOM_STATE_KEYS = frozenset({"limits", "usage", "tags", "goal_metadata", "session_log_safety"})
+ALLOWED_ROOM_STATE_KEYS = frozenset({"limits", "usage", "tags", "goal_metadata", "session_log_safety", "relay_launch"})
 PROTOCOL_OWNER_RE = re.compile(r"(?im)^[ \t]*Owner[ \t]*:[ \t]*([^\r\n]*)[ \t]*$")
 
 DDL = """
@@ -625,4 +625,4 @@ def export_transcript_md(conn: sqlite3.Connection, *, root: Path, room_id: str) 
             except FileNotFoundError:
                 lines.append(f"[artifact missing: {msg['body_path']}]")
         lines.append("")
-    return "\n".join(lines)
+    return "\n".join(lines).encode("utf-8", errors="replace").decode("utf-8")

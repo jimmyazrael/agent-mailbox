@@ -195,6 +195,8 @@ Rule: a non-terminal message must not end with agreement only. It must either na
 
 The outbox importer rejects malformed files. Treat a malformed-outbox pause as a real protocol failure and fix the outbox file rather than bypassing the importer.
 
+If two possible numbering systems collide in a discussion, prefer the mailbox message id plus the scenario/task id over conversational round numbers. For example, say `AM-07 message 4` rather than `the second 4th item`.
+
 ## Migrating From v1
 
 Current mailbox databases use schema version 2. Opening a database with an absent, older, or newer schema version fails with `schema_version_mismatch` instead of auto-migrating.
@@ -212,6 +214,8 @@ The migration copies rooms, messages, receipts, room state, pane/session metadat
 Use native Claude Code and Codex TUIs in WezTerm for progress, thinking, edits, approvals, interrupts, and steering.
 
 Mailbox launches a read-only chat transcript tab and a control panel tab by default. Keep the control panel available unless the user explicitly asks for `--no-control-panel`; it is the normal place for pause, resume, inject, stop, rediscover, and bounce-agent actions.
+
+`codex_discovery_status=failed` means the scanner did not find a Codex session id yet. In non-rediscovery scenarios this can be informational noise, not proof Codex is broken. Treat it as actionable only when resume/repair needs a Codex session id or a scenario explicitly requires `discovered`.
 
 Useful control commands:
 
@@ -239,6 +243,8 @@ python <skill>\scripts\mailbox.py resume --root <root> --task-id <id>
 The mailbox stores Claude's pre-minted session id, Codex's discovered session id, WezTerm pane ids, and the immutable workspace name. Resume rebinds live panes or recreates missing panes when session ids are available. It does not automatically use `codex resume --last`.
 
 The repair command intentionally does not support `--use-last-codex-session` even with `--yes`; if you must fall back to the most recent Codex session, run `codex resume --last` manually inside a pane.
+
+If `stop --close-panes` reports `vanished_after_failure`, a timed-out pane kill was followed by a successful pane list where the pane was absent, so the pane is classified as already gone. If the follow-up list fails, the cleanup is intentionally biased safe: the pane remains a failure with `absence_check` explaining the uncertainty.
 
 ### Recovery From A Degraded WezTerm Mux
 
@@ -295,3 +301,13 @@ pytest <skill>\tests\test_real_agents_smoke.py -q -m real_agents
 ```
 
 Scenario definitions live under `eval/scenarios`. They should be adversarial and designed to expose failures: context loss, approval friction, blocked-state handling, duplicate doorbells, rediscovery, and context overload.
+
+Scenario contracts should be anchored in observable artifacts, not agent trust. Prefer workspace files, transcript terms, outbox authors/statuses, message counts, pause reasons, pane snapshots, or explicit CLI dry-run output. If a scenario only asks an agent to assert that behavior is safe, it is a weak contract and should be hardened before it gates important work.
+
+Real runs write pane snapshot artifacts into the scenario work root so prompt/TUI failures can be audited after cleanup. Prompt delivery experiments should use `scripts/prompt_delivery_smoke.py` before changing relay send-text behavior.
+
+When verifying annotated tags from PowerShell, quote peeled refs so braces are not consumed:
+
+```powershell
+git rev-parse --short "v2.0^{}"
+```

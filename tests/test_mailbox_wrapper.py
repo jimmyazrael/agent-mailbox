@@ -1036,6 +1036,38 @@ def test_stop_close_panes_treats_timeout_as_gone_when_pane_disappeared(monkeypat
     assert out["error"] is None
     assert out["data"]["already_gone_pane_ids"] == [11]
     assert out["data"]["pane_results"][0]["vanished_after_failure"] is True
+    assert out["data"]["pane_cleanup_summary"]["vanished_after_failure_pane_ids"] == [11]
+
+
+def test_stop_close_panes_reports_uncertain_timeout_when_followup_list_fails(monkeypatch, tmp_path, capsys):
+    import mailbox as mailbox_cli
+
+    root = tmp_path / "mb"
+    init = _run("init", "--root", str(root), "--prefix", "t", "--goal", "g", "--project-cwd", str(tmp_path), "--format", "json")
+    task_id = json.loads(init.stdout)["data"]["task_id"]
+    conn = connect_db(root)
+    conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id) VALUES(?, 'chat', 11)", (task_id,))
+    conn.close()
+    monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
+    monkeypatch.setattr(mailbox_cli, "_kill_task_scoped_processes", lambda **kwargs: [])
+
+    def fake_wezterm_cli(argv, **kwargs):
+        if "kill-pane" in argv:
+            return subprocess.CompletedProcess(argv, 124, "", "wezterm cli timed out after 15s")
+        if "list" in argv:
+            return subprocess.CompletedProcess(argv, 1, "", "mux unavailable")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("tui_launcher.run_wezterm_cli", fake_wezterm_cli)
+    args = mailbox_cli.build_parser().parse_args(["stop", "--root", str(root), "--task-id", task_id, "--close-panes", "--yes", "--format", "json"])
+    assert mailbox_cli.cmd_stop(args) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["error"] == "partial_pane_cleanup"
+    assert out["data"]["pane_results"][0]["vanished_after_failure"] is False
+    assert out["data"]["pane_results"][0]["absence_check"] == "follow_up_list_failed:rc=1"
+    assert out["data"]["pane_cleanup_summary"]["uncertain_after_failure"] == [
+        {"pane_id": 11, "absence_check": "follow_up_list_failed:rc=1"}
+    ]
 
 
 def test_stop_fails_loud_when_mux_unhealthy_after_cleanup(monkeypatch, tmp_path, capsys):

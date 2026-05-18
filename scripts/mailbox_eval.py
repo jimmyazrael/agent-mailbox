@@ -9,11 +9,13 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import redirect_stdout
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
-from agent_chat import connect_db, export_transcript_md
+from agent_chat import add_participant, connect_db, export_transcript_md, init_room, send_message, set_pane
 from mailbox_lib import pid_exists
 from outbox import SENTINEL
 from pane_control import build_activate_pane_argv, build_get_text_argv, build_list_argv, build_send_text_argv, build_spawn_argv, build_split_argv
@@ -32,6 +34,7 @@ class ScenarioResult:
     notes: list[str]
     root: str
     task_id: str | None = None
+    artifacts: dict[str, Any] | None = None
 
 
 def _run_mailbox(*args: str, timeout: int = 120, env_overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -151,14 +154,18 @@ def _approve_if_prompted(wezterm_exe: Path, pane_id: int) -> bool:
     return True
 
 
-def _capture_pane_snapshots(wezterm_exe: Path, pane_ids: list[int], out_dir: Path) -> None:
+def _capture_pane_snapshots(wezterm_exe: Path, pane_ids: list[int], out_dir: Path) -> dict[str, str]:
     out_dir.mkdir(parents=True, exist_ok=True)
+    captured: dict[str, str] = {}
     for pane_id in pane_ids:
         try:
             text = _get_pane_text(wezterm_exe, pane_id)
         except Exception as exc:
             text = f"<failed to capture pane {pane_id}: {exc}>"
-        (out_dir / f"pane-{pane_id}.txt").write_text(text, encoding="utf-8", newline="\n")
+        path = out_dir / f"pane-{pane_id}.txt"
+        path.write_text(text, encoding="utf-8", newline="\n")
+        captured[str(pane_id)] = str(path)
+    return captured
 
 
 def _write_workspace(project: Path, files: dict[str, str]) -> dict[str, str]:
@@ -429,6 +436,13 @@ def _start_real_task(mailbox_root: Path, project: Path, scenario: dict[str, Any]
             "--pane-id",
             str(relay_pane_id),
         )
+        conn = connect_db(mailbox_root)
+        try:
+            from agent_chat import room_state_set
+
+            room_state_set(conn, task_id, "relay_launch", {"method": relay_launch_method, "pane_id": relay_pane_id})
+        finally:
+            conn.close()
     launch["relay_pane_id"] = relay_pane_id
     launch["relay_launch_method"] = relay_launch_method
     return task_id, launch, wezterm_exe
@@ -625,6 +639,101 @@ def _run_synthetic_action(mailbox_root: Path, task_id: str, scenario: dict[str, 
                 session_logs.find_session_log = old_find
                 tui_relay_v2._pane_alive = old_alive
                 tui_relay_v2.send_doorbell = old_send
+        elif synthetic == "stale_workspace_cleanup_runtime":
+            project_dir = Path(room["project_cwd"])
+            active_task = f"{task_id}-active"
+            terminal_task = f"{task_id}-done"
+            active_workspace = f"agent-mailbox-{active_task}"
+            terminal_workspace = f"agent-mailbox-{terminal_task}"
+            orphan_workspace = "agent-mailbox-orphan-eval"
+            init_room(
+                conn,
+                room_id=active_task,
+                name="Active cleanup guard",
+                purpose="active workspace must survive",
+                project_cwd=project_dir,
+                workspace=active_workspace,
+                first_turn="claude",
+                status="waiting",
+            )
+            init_room(
+                conn,
+                room_id=terminal_task,
+                name="Terminal cleanup target",
+                purpose="terminal workspace can be reaped",
+                project_cwd=project_dir,
+                workspace=terminal_workspace,
+                first_turn="claude",
+                status="final",
+            )
+            for seeded_task in (active_task, terminal_task):
+                add_participant(conn, seeded_task, "claude")
+                add_participant(conn, seeded_task, "codex")
+
+            import mailbox as mailbox_cli
+            import tui_launcher
+
+            original_mux = mailbox_cli._wezterm_mux_panes
+            original_run_wezterm_cli = tui_launcher.run_wezterm_cli
+            killed: list[int] = []
+            panes = [
+                {"pane_id": 101, "workspace": active_workspace},
+                {"pane_id": 202, "workspace": terminal_workspace},
+                {"pane_id": 303, "workspace": orphan_workspace},
+                {"pane_id": 404, "workspace": "default"},
+            ]
+            list_stdout = json.dumps(panes)
+
+            def fake_run_wezterm_cli(argv, **kwargs):
+                if "list" in argv:
+                    return subprocess.CompletedProcess(argv, 0, list_stdout, "")
+                if "kill-pane" in argv:
+                    pane_id = int(argv[argv.index("--pane-id") + 1])
+                    killed.append(pane_id)
+                    return subprocess.CompletedProcess(argv, 0, "", "")
+                return subprocess.CompletedProcess(argv, 0, "", "")
+
+            try:
+                mailbox_cli._wezterm_mux_panes = lambda wezterm_exe: (panes, None)
+                tui_launcher.run_wezterm_cli = fake_run_wezterm_cli
+                dry_args = mailbox_cli.build_parser().parse_args(
+                    ["reap-stale-workspaces", "--root", str(mailbox_root), "--format", "json"]
+                )
+                yes_args = mailbox_cli.build_parser().parse_args(
+                    ["reap-stale-workspaces", "--root", str(mailbox_root), "--yes", "--format", "json"]
+                )
+                with redirect_stdout(StringIO()):
+                    dry_status = mailbox_cli.cmd_reap_stale_workspaces(dry_args)
+                    yes_status = mailbox_cli.cmd_reap_stale_workspaces(yes_args)
+            finally:
+                mailbox_cli._wezterm_mux_panes = original_mux
+                tui_launcher.run_wezterm_cli = original_run_wezterm_cli
+            if dry_status != 0 or yes_status != 0:
+                return "fail", [f"reap stale status dry={dry_status} yes={yes_status}"]
+            if killed != [202, 303]:
+                return "fail", [f"killed panes {killed}, expected [202, 303]"]
+            send_message(
+                conn,
+                root=mailbox_root,
+                room_id=task_id,
+                from_agent="claude",
+                to_agent="codex",
+                kind="outbox",
+                status="continue",
+                summary="cleanup runtime checked",
+                body="STALE-WORKSPACE-PASS: dry-run preserved active workspace and --yes reaped terminal/orphan panes.",
+            )
+            send_message(
+                conn,
+                root=mailbox_root,
+                room_id=task_id,
+                from_agent="codex",
+                to_agent="claude",
+                kind="outbox",
+                status="final",
+                summary="cleanup runtime accepted",
+                body="Cleanup runtime contract accepted after synthetic stale/active workspace exercise.",
+            )
         else:
             return "error", [f"unknown synthetic_action: {synthetic}"]
         relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
@@ -705,7 +814,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             wezterm_exe=wezterm_exe,
             pane_ids=[int(launch["claude_pane_id"]), int(launch["codex_pane_id"])],
         )
-        _capture_pane_snapshots(
+        snapshot_artifacts = _capture_pane_snapshots(
             wezterm_exe,
             [int(x) for x in (launch.get("claude_pane_id"), launch.get("codex_pane_id"), launch.get("relay_pane_id")) if x is not None],
             work_root / "pane-snapshots",
@@ -738,7 +847,15 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
         for rel in success.get("forbidden_file_changes", []):
             if _file_fingerprint(project, rel) != fingerprints.get(rel):
                 notes.append(f"forbidden file changed: {rel}")
-        result = ScenarioResult(scenario["id"], scenario["name"], "pass" if not notes else "fail", notes, str(work_root), task_id)
+        result = ScenarioResult(
+            scenario["id"],
+            scenario["name"],
+            "pass" if not notes else "fail",
+            notes,
+            str(work_root),
+            task_id,
+            artifacts={"pane_snapshots": snapshot_artifacts},
+        )
         return result
     finally:
         if launch_real and task_id and (not keep or (result is not None and result.status != "pass")):
