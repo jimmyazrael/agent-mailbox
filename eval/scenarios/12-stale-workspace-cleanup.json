@@ -3,6 +3,7 @@
   "name": "Stale workspace cleanup",
   "category": "recovery",
   "difficulty": "hard",
+  "tier": "synthetic",
   "relay_version": "v2-outbox",
   "goal": "Terminal and orphaned agent-mailbox WezTerm workspaces can be identified and reaped without touching active task panes.",
   "first_turn": "claude",

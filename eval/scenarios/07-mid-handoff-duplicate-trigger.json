@@ -3,6 +3,7 @@
   "name": "Mid-handoff duplicate doorbell resilience",
   "category": "idempotency",
   "difficulty": "hard",
+  "tier": "real",
   "relay_version": "v2-outbox",
   "goal": "A mid-handoff duplicate doorbell must not cause duplicate outbox files or duplicate imported messages for the same latest state.",
   "first_turn": "claude",

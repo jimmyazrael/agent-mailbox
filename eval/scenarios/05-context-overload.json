@@ -3,6 +3,7 @@
   "name": "Context overload with one relevant clue",
   "category": "context-overload",
   "difficulty": "hard",
+  "tier": "real",
   "relay_version": "v2-outbox",
   "goal": "Agents must ignore distractors and use the single relevant clue while communicating through outbox files.",
   "first_turn": "claude",

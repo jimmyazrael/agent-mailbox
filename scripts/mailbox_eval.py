@@ -30,6 +30,7 @@ ACTION_REDISCOVER_CODEX = "rediscover_codex_after_first_codex_turn"
 class ScenarioResult:
     scenario_id: str
     name: str
+    tier: str
     status: str
     notes: list[str]
     root: str
@@ -764,8 +765,9 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
     wezterm_exe: Path | None = None
     result: ScenarioResult | None = None
     try:
+        tier = scenario.get("tier", "synthetic" if scenario.get("synthetic_action") else "real")
         if scenario.get("relay_version") != "v2-outbox":
-            result = ScenarioResult(scenario["id"], scenario["name"], "fail", [f"unsupported relay_version: {scenario.get('relay_version')}"], str(work_root), None)
+            result = ScenarioResult(scenario["id"], scenario["name"], tier, "fail", [f"unsupported relay_version: {scenario.get('relay_version')}"], str(work_root), None)
             return result
         start_args = [
             "init",
@@ -790,21 +792,21 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             try:
                 task_id, launch, wezterm_exe = _start_real_task(mailbox_root, project, scenario, context_path)
             except Exception as exc:
-                result = ScenarioResult(scenario["id"], scenario["name"], "error", [str(exc)], str(work_root), task_id)
+                result = ScenarioResult(scenario["id"], scenario["name"], tier, "error", [str(exc)], str(work_root), task_id)
                 return result
         else:
             rv = _run_mailbox(*start_args, timeout=120)
             if rv.returncode != 0:
-                result = ScenarioResult(scenario["id"], scenario["name"], "error", [rv.stderr or rv.stdout], str(work_root), task_id)
+                result = ScenarioResult(scenario["id"], scenario["name"], tier, "error", [rv.stderr or rv.stdout], str(work_root), task_id)
                 return result
             task_id = json.loads(rv.stdout)["data"]["task_id"]
         if not launch_real:
             synthetic = scenario.get("synthetic_action")
             if synthetic:
                 status, notes = _run_synthetic_action(mailbox_root, task_id, scenario, synthetic)
-                result = ScenarioResult(scenario["id"], scenario["name"], status, notes, str(work_root), task_id)
+                result = ScenarioResult(scenario["id"], scenario["name"], tier, status, notes, str(work_root), task_id)
             else:
-                result = ScenarioResult(scenario["id"], scenario["name"], "defined", ["scenario initialized only; pass --run-real to execute"], str(work_root), task_id)
+                result = ScenarioResult(scenario["id"], scenario["name"], tier, "defined", ["scenario initialized only; pass --run-real to execute"], str(work_root), task_id)
             return result
         terminal, observed_blocked = _poll_to_terminal(
             mailbox_root,
@@ -820,7 +822,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             work_root / "pane-snapshots",
         )
         if terminal != scenario.get("success", {}).get("terminal_status", "final"):
-            result = ScenarioResult(scenario["id"], scenario["name"], "fail", [f"terminal status {terminal!r}"], str(work_root), task_id)
+            result = ScenarioResult(scenario["id"], scenario["name"], tier, "fail", [f"terminal status {terminal!r}"], str(work_root), task_id)
             return result
         conn = connect_db(mailbox_root)
         try:
@@ -850,6 +852,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
         result = ScenarioResult(
             scenario["id"],
             scenario["name"],
+            tier,
             "pass" if not notes else "fail",
             notes,
             str(work_root),

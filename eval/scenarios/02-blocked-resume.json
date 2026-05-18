@@ -3,6 +3,7 @@
   "name": "Blocked state then user injection",
   "category": "blocked-resume",
   "difficulty": "hard",
+  "tier": "real",
   "relay_version": "v2-outbox",
   "goal": "Claude must write a blocked outbox message for missing information, then after DB-only user injection hand off to Codex; Codex must verify the injected release code and write the final outbox.",
   "first_turn": "claude",

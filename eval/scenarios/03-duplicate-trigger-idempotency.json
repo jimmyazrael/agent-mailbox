@@ -3,6 +3,7 @@
   "name": "Duplicate doorbell idempotency",
   "category": "idempotency",
   "difficulty": "hard",
+  "tier": "real",
   "relay_version": "v2-outbox",
   "goal": "Duplicate doorbells or duplicate outbox content must not create duplicate imported messages for the same response.",
   "first_turn": "claude",

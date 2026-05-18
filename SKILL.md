@@ -334,6 +334,14 @@ pytest <skill>\tests\test_real_agents_smoke.py -q -m real_agents
 
 Scenario definitions live under `eval/scenarios`. They should be adversarial and designed to expose failures: context loss, approval friction, blocked-state handling, duplicate doorbells, rediscovery, and context overload.
 
+Every scenario declares a `tier`:
+
+- `real`: intended for real Claude/Codex/WezTerm execution; a non-real run only proves initialization.
+- `synthetic`: exercises mailbox runtime paths with controlled fakes or monkey-patched adapters.
+- `unit`: reserved for deterministic checks that should usually live under `tests/` instead of `eval/scenarios`.
+
+A synthetic pass must not be described as proof of real-agent behavior. If a scenario uses `synthetic_action`, its tier must be `synthetic`.
+
 Scenario contracts should be anchored in observable artifacts, not agent trust. Prefer workspace files, transcript terms, outbox authors/statuses, message counts, pause reasons, pane snapshots, or explicit CLI dry-run output. If a scenario only asks an agent to assert that behavior is safe, it is a weak contract and should be hardened before it gates important work.
 
 Real runs write pane snapshot artifacts into the scenario work root so prompt/TUI failures can be audited after cleanup. Prompt delivery experiments should use `scripts/prompt_delivery_smoke.py` before changing relay send-text behavior.

@@ -3,6 +3,7 @@
   "name": "Max rounds fails closed",
   "category": "safety-limit",
   "difficulty": "hard",
+  "tier": "real",
   "relay_version": "v2-outbox",
   "goal": "A stalled or circular v2 outbox task must stop at the configured max round limit instead of continuing indefinitely.",
   "first_turn": "codex",

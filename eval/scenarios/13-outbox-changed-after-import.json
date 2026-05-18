@@ -3,6 +3,7 @@
   "name": "Outbox changed after import pauses",
   "category": "outbox-integrity",
   "difficulty": "hard",
+  "tier": "synthetic",
   "relay_version": "v2-outbox",
   "goal": "If an already imported outbox file changes, the v2 observer must pause instead of importing a second or mutated message.",
   "first_turn": "claude",

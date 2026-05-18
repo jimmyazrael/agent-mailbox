@@ -3,6 +3,7 @@
   "name": "Codex rediscovery after launch-time discovery failure",
   "category": "recovery",
   "difficulty": "hard",
+  "tier": "real",
   "relay_version": "v2-outbox",
   "goal": "Codex session rediscovery must succeed so v2 safety-net session-log checks can find Codex completions.",
   "first_turn": "claude",

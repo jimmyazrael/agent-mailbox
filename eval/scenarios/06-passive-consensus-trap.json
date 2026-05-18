@@ -3,6 +3,7 @@
   "name": "Passive consensus trap",
   "category": "role-mode-protocol",
   "difficulty": "hard",
+  "tier": "real",
   "relay_version": "v2-outbox",
   "goal": "Prevent agreement-only loops by forcing an explicit owner, next action, and done condition inside the outbox message body.",
   "first_turn": "claude",

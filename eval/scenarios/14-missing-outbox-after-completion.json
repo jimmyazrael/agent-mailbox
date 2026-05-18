@@ -3,6 +3,7 @@
   "name": "Missing outbox after completed session pauses",
   "category": "outbox-safety-net",
   "difficulty": "hard",
+  "tier": "synthetic",
   "relay_version": "v2-outbox",
   "goal": "If native session logs show a completed agent turn but no outbox appears, v2 relay must pause for user attention.",
   "first_turn": "claude",

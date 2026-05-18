@@ -19,6 +19,11 @@ def test_eval_scenarios_are_hard_and_structured():
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["id"].startswith("AM-")
         assert data["difficulty"] == "hard"
+        assert data["tier"] in {"real", "synthetic", "unit"}
+        if data["tier"] == "synthetic":
+            assert data.get("synthetic_action"), f"{path.name} is synthetic but has no synthetic_action"
+        if data.get("synthetic_action"):
+            assert data["tier"] == "synthetic", f"{path.name} has synthetic_action but tier is not synthetic"
         assert data["goal"]
         assert data["context"]
         assert data["workspace_files"]
@@ -47,6 +52,7 @@ def test_mailbox_eval_initializes_scenario_without_real_agents():
     assert rv.returncode == 0, rv.stderr
     result = json.loads(rv.stdout)
     assert result["scenario_id"] == "AM-01"
+    assert result["tier"] == "real"
     assert result["status"] == "defined"
     assert result["task_id"]
 
@@ -60,6 +66,7 @@ def test_mailbox_eval_runs_synthetic_outbox_integrity_scenario():
     assert rv.returncode == 0, rv.stderr
     result = json.loads(rv.stdout)
     assert result["scenario_id"] == "AM-13"
+    assert result["tier"] == "synthetic"
     assert result["status"] == "pass"
 
 
@@ -72,6 +79,7 @@ def test_mailbox_eval_runs_synthetic_missing_outbox_scenario():
     assert rv.returncode == 0, rv.stderr
     result = json.loads(rv.stdout)
     assert result["scenario_id"] == "AM-14"
+    assert result["tier"] == "synthetic"
     assert result["status"] == "pass"
 
 
@@ -488,6 +496,7 @@ def test_mailbox_eval_am12_exercises_cleanup_runtime():
     assert rv.returncode == 0, rv.stderr
     result = json.loads(rv.stdout)
     assert result["scenario_id"] == "AM-12"
+    assert result["tier"] == "synthetic"
     assert result["status"] == "pass"
 
 

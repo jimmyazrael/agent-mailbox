@@ -3,6 +3,7 @@
   "name": "Fresh context bootstrap under ambiguity",
   "category": "context-bootstrap",
   "difficulty": "hard",
+  "tier": "real",
   "relay_version": "v2-outbox",
   "goal": "Claude and Codex must identify the relevant project instructions and produce a final answer through the v2 outbox protocol that obeys the bootstrap context.",
   "first_turn": "claude",

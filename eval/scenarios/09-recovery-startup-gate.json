@@ -3,6 +3,7 @@
   "name": "Recovery startup gate",
   "category": "recovery",
   "difficulty": "hard",
+  "tier": "real",
   "relay_version": "v2-outbox",
   "goal": "After a pane crash or resume, the v2 relay must stay paused until both Claude and Codex panes are visibly ready.",
   "first_turn": "claude",
