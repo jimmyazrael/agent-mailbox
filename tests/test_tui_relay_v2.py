@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 from agent_chat import add_participant, connect_db, init_db, init_room, room_state_get, room_state_set, send_message, set_pane
 from tui_relay_v2 import (
@@ -8,6 +9,7 @@ from tui_relay_v2 import (
     first_turn_text,
     run_once,
     run_watcher_loop,
+    send_doorbell,
 )
 
 
@@ -72,6 +74,21 @@ def test_first_turn_text_includes_routing_filter(tmp_path):
     assert "`to: claude`" in text
     assert "`to: codex`" in text
     assert "do not respond to it" in text
+
+
+def test_send_doorbell_submits_prompt_and_enter_in_one_send_text(monkeypatch):
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    assert send_doorbell(wezterm_exe=Path("wezterm"), pane_id=42, text="hello\r")
+
+    send_text_calls = [argv for argv in calls if "send-text" in argv]
+    assert len(send_text_calls) == 1
+    assert send_text_calls[0][-1] == "hello\r\n"
 
 
 def test_run_once_imports_outbox_then_sends_doorbell_to_next_turn(monkeypatch, tmp_path):

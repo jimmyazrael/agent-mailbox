@@ -63,22 +63,14 @@ def send_doorbell(*, wezterm_exe: Path, pane_id: int, text: str) -> bool:
         text=True,
         stdin=subprocess.DEVNULL,
     )
+    submitted_text = text.rstrip("\r\n") + "\r\n"
     rv_text = subprocess.run(
-        build_send_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, text=text.rstrip("\r"), no_paste=True),
+        build_send_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, text=submitted_text, no_paste=True),
         capture_output=True,
         text=True,
         stdin=subprocess.DEVNULL,
     )
-    if rv_text.returncode != 0:
-        return False
-    time.sleep(0.5)
-    rv_enter = subprocess.run(
-        build_send_text_argv(wezterm_exe=wezterm_exe, pane_id=pane_id, text="\r\n", no_paste=True),
-        capture_output=True,
-        text=True,
-        stdin=subprocess.DEVNULL,
-    )
-    return rv_enter.returncode == 0
+    return rv_text.returncode == 0
 
 
 def _pane_alive(wezterm_exe: Path, pane_id: int) -> bool:
