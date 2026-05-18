@@ -93,6 +93,8 @@ python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py review-init
 
 `review-init` creates the same SQLite room and outbox folders but does not spawn Claude, Codex, relay, chat, or control panes. It prints `prompts` for the existing agent UIs plus a `chat_monitor_command` the user may run if they want a read-only transcript. The user manually tells the active agent that the mailbox has a reply; agents still write the normal outbox Markdown files.
 
+For the smallest human-in-the-loop review workflow, prefer the separate `agent-mailbox-lite` skill. It uses shared files and paste-ready prompts only, with no SQLite, WezTerm, relay, panes, recovery commands, or control panel. Use this full `agent-mailbox` skill when autonomous orchestration, visible WezTerm panes, relay/recovery, or runtime/eval coverage is explicitly needed.
+
 For health checks and scripted control, use the same mux-targeted path as the launcher:
 
 ```powershell
