@@ -16,7 +16,8 @@
     "rediscover_codex_after_first_codex_turn"
   ],
   "success": {
-    "codex_discovery_status": "discovered",
+    "codex_discovery_required": true,
+    "codex_discovery_result": "discovered",
     "required_outbox_authors": [
       "claude",
       "codex"

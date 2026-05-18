@@ -247,7 +247,7 @@ Use native Claude Code and Codex TUIs in WezTerm for progress, thinking, edits, 
 
 Mailbox launches a read-only chat transcript tab and a control panel tab by default. Keep the control panel available unless the user explicitly asks for `--no-control-panel`; it is the normal place for pause, resume, inject, stop, rediscover, and bounce-agent actions.
 
-`codex_discovery_status=failed` means the scanner did not find a Codex session id yet. In non-rediscovery scenarios this can be informational noise, not proof Codex is broken. Treat it as actionable only when resume/repair needs a Codex session id or a scenario explicitly requires `discovered`.
+Codex session discovery is reported as two fields in public command/eval output: `codex_discovery_required` and `codex_discovery_result`. A `failed` result is actionable only when `codex_discovery_required` is true, or when resume/repair needs a Codex session id. Otherwise it means the scanner did not find a Codex session id yet and may be informational.
 
 Useful control commands:
 

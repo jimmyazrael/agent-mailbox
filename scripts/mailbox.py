@@ -763,7 +763,8 @@ def _launch_agent_panes(args, *, launch_relay: bool) -> dict[str, Any]:
             "chat_pane_id": chat_pane_id,
             "control_pane_id": control_pane_id,
             "codex_session_id": discovery["session_id"],
-            "codex_discovery_status": discovery["status"],
+            "codex_discovery_required": True,
+            "codex_discovery_result": discovery["status"],
             "startup": result.get("startup"),
         }
     finally:
@@ -1338,7 +1339,8 @@ def cmd_status(args) -> int:
             "watcher_dead_with_running_state": watcher_dead_with_running_state,
             "pending_user_injections": pending_user_injections,
             "panes": panes,
-            "codex_discovery_status": sessions.get("codex", {}).get("discovery_status"),
+            "codex_discovery_required": False,
+            "codex_discovery_result": sessions.get("codex", {}).get("discovery_status", "n/a"),
             "relay_launch": relay_launch,
         }
     finally:
@@ -2013,7 +2015,8 @@ def cmd_repair(args) -> int:
                 scanned_files=discovery["scanned_files"],
                 attempted_at=discovery["attempted_at"],
             )
-            data["codex_discovery_status"] = discovery["status"]
+            data["codex_discovery_required"] = True
+            data["codex_discovery_result"] = discovery["status"]
             data["codex_session_id"] = discovery["session_id"]
         if args.restart_agent:
             agent = args.restart_agent

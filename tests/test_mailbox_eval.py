@@ -29,6 +29,9 @@ def test_eval_scenarios_are_hard_and_structured():
         assert data["workspace_files"]
         assert data["relay_version"] == "v2-outbox"
         assert data["success"]["terminal_status"] in {"final", "paused"}
+        assert "codex_discovery_status" not in data["success"]
+        if data["success"].get("codex_discovery_required"):
+            assert data["success"]["codex_discovery_result"] in {"n/a", "pending", "discovered", "failed"}
         categories.add(data["category"])
     assert {"context-bootstrap", "blocked-resume", "idempotency", "recovery", "context-overload", "role-mode-protocol", "outbox-integrity", "outbox-safety-net"}.issubset(categories)
 
@@ -251,7 +254,8 @@ def test_real_conversation_scenarios_require_participation_contracts():
 def test_am04_rediscovery_requires_codex_outbox_after_rediscovery():
     data = json.loads((SCENARIOS / "04-codex-rediscovery.json").read_text(encoding="utf-8"))
     success = data["success"]
-    assert success["codex_discovery_status"] == "discovered"
+    assert success["codex_discovery_required"] is True
+    assert success["codex_discovery_result"] == "discovered"
     assert success["min_outbox_messages_by_author"]["codex"] >= 1
     assert "continue" in success["required_outbox_statuses_by_author"]["codex"]
     assert success["final_from_agent"] == "claude"

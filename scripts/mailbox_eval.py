@@ -843,8 +843,11 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             notes.append("blocked status was not observed")
         if "max_messages" in success and message_count > int(success["max_messages"]):
             notes.append(f"too many messages: {message_count}")
-        if success.get("codex_discovery_status") and sessions.get("codex", {}).get("discovery_status") != success["codex_discovery_status"]:
-            notes.append(f"codex discovery status: {sessions.get('codex', {}).get('discovery_status')}")
+        codex_discovery_required = bool(success.get("codex_discovery_required", False))
+        codex_discovery_result = sessions.get("codex", {}).get("discovery_status", "n/a")
+        expected_discovery = success.get("codex_discovery_result")
+        if codex_discovery_required and expected_discovery and codex_discovery_result != expected_discovery:
+            notes.append(f"codex discovery result: {codex_discovery_result}, expected {expected_discovery}")
         notes.extend(participation_notes)
         for rel in success.get("forbidden_file_changes", []):
             if _file_fingerprint(project, rel) != fingerprints.get(rel):
