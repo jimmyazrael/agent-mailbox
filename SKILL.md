@@ -85,6 +85,14 @@ This opens a WezTerm workspace with Claude, Codex, relay, and read-only chat tra
 
 The WezTerm GUI must be visibly surfaced after launch. If `mailbox.py start` returns pane ids but no window appears, treat that as a launcher failure and attach manually with `wezterm start --domain unix --workspace <workspace> --attach`, then fix the launcher before relying on the task.
 
+For a low-automation review experiment, use `review-init` instead of `start`:
+
+```powershell
+python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py review-init --prefix review --goal "Review this change" --project-cwd F:\Programs\LocalAgentConcept --context-file F:\tmp\review-context.md --format json
+```
+
+`review-init` creates the same SQLite room and outbox folders but does not spawn Claude, Codex, relay, chat, or control panes. It prints `prompts` for the existing agent UIs plus a `chat_monitor_command` the user may run if they want a read-only transcript. The user manually tells the active agent that the mailbox has a reply; agents still write the normal outbox Markdown files.
+
 For health checks and scripted control, use the same mux-targeted path as the launcher:
 
 ```powershell

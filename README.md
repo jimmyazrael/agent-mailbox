@@ -59,6 +59,29 @@ python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py start `
 
 Use `claude` first for design review, ambiguity reduction, or second-opinion planning. Use `codex` first when the implementation task is already clear.
 
+## Manual Review Mode
+
+Use `review-init` when you want the mailbox/outbox protocol without autonomous panes or a relay:
+
+```powershell
+python C:\Users\Jimmy\.agent-skills\agent-mailbox\scripts\mailbox.py review-init `
+  --root F:\Programs\LocalAgentConcept\.agent-mailbox `
+  --prefix quick-review `
+  --goal "Review a small patch with Claude and Codex" `
+  --project-cwd F:\Programs\LocalAgentConcept `
+  --context-file F:\tmp\quick-review-context.md `
+  --format json
+```
+
+The command creates the room and outbox folders, then prints:
+
+- `task_id` and `root`
+- per-agent prompt text for existing Claude Code / Codex UIs
+- per-agent outbox folders
+- a `chat_monitor_command` for an optional read-only transcript
+
+No WezTerm panes are spawned in this mode. The user manually tells each agent that the mailbox has a reply, while agents still write normal outbox Markdown files.
+
 ## Bootstrap Context
 
 For serious tasks, the bootstrap context should include:
