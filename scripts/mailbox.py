@@ -1877,16 +1877,26 @@ def cmd_stop(args) -> int:
         from tui_launcher import find_wezterm
 
         wez = find_wezterm()
-        pane_results, killed_panes, already_gone_panes, failed_panes = _kill_bound_panes(
-            wezterm_exe=wez,
-            pane_ids=pane_ids,
-        )
         killed_processes = _kill_task_scoped_processes(
             task_id=task_id,
             workspace=workspace,
             root=root,
             project_cwd=project_cwd,
         )
+        pane_results, killed_panes, already_gone_panes, failed_panes = _kill_bound_panes(
+            wezterm_exe=wez,
+            pane_ids=pane_ids,
+        )
+        killed_processes += [
+            pid
+            for pid in _kill_task_scoped_processes(
+                task_id=task_id,
+                workspace=workspace,
+                root=root,
+                project_cwd=project_cwd,
+            )
+            if pid not in killed_processes
+        ]
         mux_health = _mux_health_after_cleanup(wez)
     else:
         pane_results = []

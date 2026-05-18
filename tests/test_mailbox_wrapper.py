@@ -906,7 +906,7 @@ def test_pause_stop_and_repair_rebind(tmp_path):
     assert conn.execute("SELECT status FROM rooms WHERE id=?", (task_id,)).fetchone()["status"] == "stopped"
 
 
-def test_stop_close_panes_kills_task_scoped_processes(monkeypatch, tmp_path):
+def test_stop_close_panes_kills_task_scoped_processes(monkeypatch, tmp_path, capsys):
     import mailbox as mailbox_cli
 
     root = tmp_path / "mb"
@@ -920,17 +920,19 @@ def test_stop_close_panes_kills_task_scoped_processes(monkeypatch, tmp_path):
     conn.close()
     killed_processes = []
     killed_panes = []
+    events = []
     monkeypatch.setattr("tui_launcher.find_wezterm", lambda: tmp_path / "wezterm.exe")
 
     def fake_wezterm_cli(argv, **kwargs):
         if "kill-pane" in argv:
+            events.append("pane")
             killed_panes.append(int(argv[argv.index("--pane-id") + 1]))
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr("tui_launcher.run_wezterm_cli", fake_wezterm_cli)
     monkeypatch.setattr(mailbox_cli.os, "name", "nt")
     monkeypatch.setattr(mailbox_cli.os, "getpid", lambda: 999)
-    monkeypatch.setattr(mailbox_cli, "_run_taskkill_tree", lambda pid: killed_processes.append(pid) or True)
+    monkeypatch.setattr(mailbox_cli, "_run_taskkill_tree", lambda pid: events.append(f"process:{pid}") or killed_processes.append(pid) or True)
 
     rows = json.dumps(
         [
@@ -949,7 +951,8 @@ def test_stop_close_panes_kills_task_scoped_processes(monkeypatch, tmp_path):
     args = mailbox_cli.build_parser().parse_args(["stop", "--root", str(root), "--task-id", task_id, "--close-panes", "--yes", "--format", "json"])
     assert mailbox_cli.cmd_stop(args) == 0
     assert killed_panes == [123]
-    assert killed_processes == [111]
+    assert events[:2] == ["process:111", "pane"]
+    assert json.loads(capsys.readouterr().out)["data"]["killed_process_ids"] == [111]
 
 
 def test_stop_close_panes_returns_per_pane_outcomes(monkeypatch, tmp_path, capsys):
