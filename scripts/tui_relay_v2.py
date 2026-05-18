@@ -27,6 +27,9 @@ def doorbell_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
         f"  to: {peer}\n"
         "  status: <continue | blocked | final | error>\n"
         "  summary: <one-line summary>\n\n"
+        "The chat monitor may show messages addressed to your peer.\n"
+        f"Only act on messages where `to: {agent}` or where the user has injected to you or to broadcast.\n"
+        f"If a message is `to: {peer}`, do not respond to it.\n\n"
         "End the file with the literal sentinel on its own line: <!-- AGENT-MAILBOX:DONE -->\n\n"
         "Then stop.\r"
     )
@@ -43,6 +46,9 @@ def first_turn_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
         f"  to: {peer}\n"
         "  status: <continue | blocked | final | error>\n"
         "  summary: <one-line summary>\n\n"
+        "The chat monitor may show messages addressed to your peer.\n"
+        f"Only act on messages where `to: {agent}` or where the user has injected to you or to broadcast.\n"
+        f"If a message is `to: {peer}`, do not respond to it.\n\n"
         "End the file with the literal sentinel on its own line: <!-- AGENT-MAILBOX:DONE -->\n\n"
         "Then stop.\r"
     )

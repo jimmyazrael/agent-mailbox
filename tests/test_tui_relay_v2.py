@@ -46,6 +46,14 @@ def test_doorbell_text_points_to_outbox_and_sentinel(tmp_path):
     assert "status: <continue | blocked | final | error>" in text
 
 
+def test_doorbell_text_includes_routing_filter(tmp_path):
+    text = doorbell_text(agent="codex", peer="claude", task_id="t1", root=tmp_path)
+    assert "Only act on messages where" in text
+    assert "`to: codex`" in text
+    assert "`to: claude`" in text
+    assert "do not respond to it" in text
+
+
 def test_first_turn_text_points_to_bootstrap_context_and_outbox(tmp_path):
     text = first_turn_text(agent="claude", peer="codex", task_id="t1", root=tmp_path)
     assert "You have the first turn" in text
@@ -54,6 +62,14 @@ def test_first_turn_text_points_to_bootstrap_context_and_outbox(tmp_path):
     assert "from: claude" in text
     assert "to: codex" in text
     assert "status: <continue | blocked | final | error>" in text
+
+
+def test_first_turn_text_includes_routing_filter(tmp_path):
+    text = first_turn_text(agent="claude", peer="codex", task_id="t1", root=tmp_path)
+    assert "Only act on messages where" in text
+    assert "`to: claude`" in text
+    assert "`to: codex`" in text
+    assert "do not respond to it" in text
 
 
 def test_run_once_imports_outbox_then_sends_doorbell_to_next_turn(monkeypatch, tmp_path):
