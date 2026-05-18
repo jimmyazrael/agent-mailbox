@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from mailbox_lib import TERMINAL_STATUSES, VALID_MESSAGE_STATUSES, VALID_ROOM_STATUSES, utc_now
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 INLINE_BODY_THRESHOLD_BYTES = 4096
 ALLOWED_ROOM_STATE_KEYS = frozenset({"limits", "usage", "tags", "goal_metadata", "session_log_safety"})
 PROTOCOL_OWNER_RE = re.compile(r"(?im)^[ \t]*Owner[ \t]*:[ \t]*([^\r\n]*)[ \t]*$")
@@ -118,13 +118,54 @@ def db_path(root: Path) -> Path:
     return root / "agent-chat.sqlite"
 
 
-def connect_db(root: Path) -> sqlite3.Connection:
+class SchemaVersionMismatchError(RuntimeError):
+    pass
+
+
+def _schema_meta_exists(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'").fetchone()
+    return row is not None
+
+
+def _validate_schema_version(conn: sqlite3.Connection, db_file: Path) -> None:
+    if not _schema_meta_exists(conn):
+        raise SchemaVersionMismatchError(
+            f"schema_version_mismatch: {db_file} has no schema_meta table; "
+            "run scripts/migrate_v1_to_v2.py for v1 databases or initialize a fresh mailbox"
+        )
+    row = conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
+    if row is None:
+        raise SchemaVersionMismatchError(
+            f"schema_version_mismatch: {db_file} has no schema_version row; "
+            "run scripts/migrate_v1_to_v2.py for v1 databases or initialize a fresh mailbox"
+        )
+    existing = int(row[0])
+    if existing < SCHEMA_VERSION:
+        raise SchemaVersionMismatchError(
+            f"schema_version_mismatch: {db_file} schema version {existing} is older than required "
+            f"{SCHEMA_VERSION}; run scripts/migrate_v1_to_v2.py"
+        )
+    if existing > SCHEMA_VERSION:
+        raise SchemaVersionMismatchError(
+            f"schema_version_mismatch: {db_file} schema version {existing} is newer than supported "
+            f"{SCHEMA_VERSION}; upgrade agent-mailbox before opening it"
+        )
+
+
+def connect_db(root: Path, *, require_schema: bool = True) -> sqlite3.Connection:
     root.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path(root)), isolation_level=None)
+    path = db_path(root)
+    conn = sqlite3.connect(str(path), isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
+    if require_schema:
+        try:
+            _validate_schema_version(conn, path)
+        except Exception:
+            conn.close()
+            raise
     return conn
 
 
@@ -140,8 +181,22 @@ def schema_version(conn: sqlite3.Connection) -> int:
 
 
 def init_db(root: Path) -> None:
-    conn = connect_db(root)
+    conn = connect_db(root, require_schema=False)
     try:
+        if _schema_meta_exists(conn):
+            row = conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
+            if row is not None:
+                existing = int(row[0])
+                if existing > SCHEMA_VERSION:
+                    raise SchemaVersionMismatchError(
+                        f"schema_version_mismatch: {db_path(root)} schema version {existing} is newer than supported "
+                        f"{SCHEMA_VERSION}; upgrade agent-mailbox before opening it"
+                    )
+                if existing < SCHEMA_VERSION:
+                    raise SchemaVersionMismatchError(
+                        f"schema_version_mismatch: {db_path(root)} schema version {existing} is older than required "
+                        f"{SCHEMA_VERSION}; run scripts/migrate_v1_to_v2.py"
+                    )
         conn.executescript(DDL)
         row = conn.execute("SELECT value FROM schema_meta WHERE key='schema_version'").fetchone()
         if row is None:
@@ -149,15 +204,6 @@ def init_db(root: Path) -> None:
                 "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
-        else:
-            existing = int(row[0])
-            if existing > SCHEMA_VERSION:
-                raise RuntimeError(
-                    f"agent-chat.sqlite has newer schema version {existing}; "
-                    f"this code only supports {SCHEMA_VERSION}"
-                )
-            if existing < SCHEMA_VERSION:
-                raise RuntimeError(f"unexpected older schema version {existing}; expected {SCHEMA_VERSION}")
     finally:
         conn.close()
 

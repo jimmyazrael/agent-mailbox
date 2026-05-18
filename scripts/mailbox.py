@@ -16,6 +16,7 @@ from typing import Any, Optional
 
 from agent_chat import (
     DDL,
+    SCHEMA_VERSION,
     ack_message,
     add_participant,
     connect_db,
@@ -1636,7 +1637,7 @@ def cmd_archive(args) -> int:
         archive_conn.executescript(DDL)
         archive_conn.execute(
             "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('schema_version', ?)",
-            (str(1),),
+            (str(SCHEMA_VERSION),),
         )
 
         copied: dict[str, int] = {}

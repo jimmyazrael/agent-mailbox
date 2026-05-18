@@ -1,4 +1,6 @@
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +20,7 @@ from agent_chat import (
     resolve_task_id,
     room_state_get,
     room_state_set,
+    SchemaVersionMismatchError,
     schema_version,
     send_message,
     set_pane,
@@ -49,7 +52,7 @@ def test_init_db_creates_all_tables(tmp_path):
         "receipts",
         "room_state",
     }.issubset(tables)
-    assert schema_version(conn) == 1
+    assert schema_version(conn) == 2
 
 
 def test_init_db_rejects_newer_version(tmp_path):
@@ -57,8 +60,126 @@ def test_init_db_rejects_newer_version(tmp_path):
     conn = connect_db(tmp_path)
     conn.execute("UPDATE schema_meta SET value='999' WHERE key='schema_version'")
     conn.close()
-    with pytest.raises(RuntimeError, match="newer schema version"):
+    with pytest.raises(SchemaVersionMismatchError, match="schema_version_mismatch"):
         init_db(tmp_path)
+
+
+def test_connect_db_rejects_absent_schema_version(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    raw = sqlite3.connect(tmp_path / "agent-chat.sqlite")
+    raw.execute("CREATE TABLE rooms(id TEXT PRIMARY KEY)")
+    raw.close()
+    with pytest.raises(SchemaVersionMismatchError, match="schema_version_mismatch"):
+        connect_db(tmp_path)
+
+
+def test_connect_db_rejects_older_schema_version(tmp_path):
+    init_db(tmp_path)
+    conn = connect_db(tmp_path)
+    conn.execute("UPDATE schema_meta SET value='1' WHERE key='schema_version'")
+    conn.close()
+    with pytest.raises(SchemaVersionMismatchError, match="schema_version_mismatch"):
+        connect_db(tmp_path)
+
+
+def test_migrate_v1_to_v2_copies_messages_and_rebuilds_sources(tmp_path):
+    source = tmp_path / "v1.sqlite"
+    migrated_root = tmp_path / "migrated"
+    dest = migrated_root / "agent-chat.sqlite"
+    raw = sqlite3.connect(source)
+    try:
+        raw.executescript(
+            """
+            CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE rooms (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                parent_room_id TEXT,
+                purpose TEXT NOT NULL,
+                project_cwd TEXT NOT NULL,
+                workspace TEXT NOT NULL,
+                status TEXT NOT NULL,
+                turn TEXT,
+                blocked_reason TEXT,
+                last_message_id INTEGER NOT NULL DEFAULT 0,
+                round INTEGER NOT NULL DEFAULT 0,
+                exit_condition TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE participants (room_id TEXT NOT NULL, agent TEXT NOT NULL, role TEXT, PRIMARY KEY(room_id, agent));
+            CREATE TABLE agent_sessions (
+                room_id TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                session_id TEXT,
+                session_name TEXT NOT NULL,
+                discovery_marker TEXT,
+                discovery_status TEXT NOT NULL DEFAULT 'n/a',
+                discovery_scanned_files INTEGER NOT NULL DEFAULT 0,
+                discovery_last_attempt_at TEXT,
+                PRIMARY KEY(room_id, agent)
+            );
+            CREATE TABLE panes (room_id TEXT NOT NULL, pane_role TEXT NOT NULL, pane_id INTEGER, bound_at TEXT, PRIMARY KEY(room_id, pane_role));
+            CREATE TABLE tui_relay_state (
+                room_id TEXT PRIMARY KEY,
+                last_doorbell_agent TEXT,
+                last_doorbell_turn TEXT,
+                last_doorbell_message_id INTEGER NOT NULL DEFAULT 0,
+                paused INTEGER NOT NULL DEFAULT 0,
+                pause_reason TEXT,
+                watcher_pid INTEGER,
+                watcher_started_at TEXT,
+                watcher_host TEXT,
+                watcher_last_result TEXT,
+                watcher_finished_at TEXT
+            );
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id TEXT NOT NULL,
+                from_agent TEXT NOT NULL,
+                to_agent TEXT,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                summary TEXT,
+                body_text TEXT,
+                body_path TEXT,
+                blocked_reason TEXT,
+                reply_to INTEGER,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE receipts (message_id INTEGER NOT NULL, agent TEXT NOT NULL, read_at TEXT, ack_at TEXT, PRIMARY KEY(message_id, agent));
+            CREATE TABLE room_state (room_id TEXT NOT NULL, key TEXT NOT NULL, value_json TEXT NOT NULL, PRIMARY KEY(room_id, key));
+            """
+        )
+        raw.execute("INSERT INTO schema_meta(key, value) VALUES('schema_version', '1')")
+        raw.execute(
+            "INSERT INTO rooms(id, name, purpose, project_cwd, workspace, status, turn, last_message_id, round, created_at, updated_at) "
+            "VALUES('t1','T1','p',?,'agent-mailbox-t1','waiting','codex',1,1,'now','now')",
+            (str(tmp_path),),
+        )
+        raw.execute("INSERT INTO participants(room_id, agent, role) VALUES('t1','claude',NULL)")
+        raw.execute("INSERT INTO participants(room_id, agent, role) VALUES('t1','codex',NULL)")
+        raw.execute("INSERT INTO tui_relay_state(room_id) VALUES('t1')")
+        raw.execute(
+            "INSERT INTO messages(id, room_id, from_agent, to_agent, kind, status, summary, body_text, created_at) "
+            "VALUES(1,'t1','claude','codex','outbox','continue','hello','body','now')"
+        )
+        raw.commit()
+    finally:
+        raw.close()
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "migrate_v1_to_v2.py"
+    subprocess.run([sys.executable, str(script), str(source), str(dest), "--format", "json"], check=True)
+
+    conn = connect_db(migrated_root)
+    try:
+        assert schema_version(conn) == 2
+        assert conn.execute("SELECT COUNT(*) AS n FROM messages WHERE room_id='t1'").fetchone()["n"] == 1
+        source_row = conn.execute("SELECT * FROM message_sources WHERE message_id=1").fetchone()
+        assert source_row["source_type"] == "legacy_migration"
+        assert len(source_row["source_hash"]) == 64
+    finally:
+        conn.close()
 
 
 def test_room_identity_and_panes(tmp_path):
