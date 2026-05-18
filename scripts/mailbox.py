@@ -217,6 +217,25 @@ def _pane_gone(stderr: str) -> bool:
     return "no such pane" in text or "not found" in text
 
 
+def _pane_kill_timed_out(result: dict[str, Any]) -> bool:
+    text = f"{result.get('stderr') or ''}\n{result.get('stdout') or ''}".lower()
+    return int(result.get("rc") or 0) == 124 or "timed out" in text
+
+
+def _pane_absent_after_failure(*, wezterm_exe: Path, pane_id: int) -> bool:
+    from pane_control import build_list_argv
+    from tui_launcher import parse_wezterm_list, run_wezterm_cli
+
+    rv = run_wezterm_cli(build_list_argv(wezterm_exe=wezterm_exe), timeout=5)
+    if rv.returncode != 0:
+        return False
+    try:
+        panes = parse_wezterm_list(rv.stdout)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    return all(int(pane.get("pane_id", -1)) != int(pane_id) for pane in panes)
+
+
 def _kill_bound_panes(*, wezterm_exe: Path, pane_ids: list[int]) -> tuple[list[dict[str, Any]], list[int], list[int], list[dict[str, Any]]]:
     from pane_control import build_kill_pane_argv
     from tui_launcher import run_wezterm_cli
@@ -240,6 +259,9 @@ def _kill_bound_panes(*, wezterm_exe: Path, pane_ids: list[int]) -> tuple[list[d
         if rv.returncode == 0:
             killed_panes.append(pane_id)
         elif _pane_gone(result["stderr"]):
+            already_gone_panes.append(pane_id)
+        elif _pane_kill_timed_out(result) and _pane_absent_after_failure(wezterm_exe=wezterm_exe, pane_id=pane_id):
+            result["vanished_after_failure"] = True
             already_gone_panes.append(pane_id)
         else:
             failed_panes.append(result)
