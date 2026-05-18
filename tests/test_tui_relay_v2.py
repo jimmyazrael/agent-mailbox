@@ -37,6 +37,7 @@ def _outbox_text(author="codex", peer="claude"):
 
 def test_doorbell_text_points_to_outbox_and_sentinel(tmp_path):
     text = doorbell_text(agent="codex", peer="claude", task_id="t1", root=tmp_path)
+    assert "AGENT_MAILBOX_TASK_ID=t1" in text
     assert "Read the latest reply in the chat monitor pane" in text
     assert str(tmp_path / "t1" / "outbox" / "codex" / "000001.md") in text
     assert "<!-- AGENT-MAILBOX:DONE -->" in text
@@ -57,6 +58,7 @@ def test_doorbell_text_includes_routing_filter(tmp_path):
 def test_first_turn_text_points_to_bootstrap_context_and_outbox(tmp_path):
     text = first_turn_text(agent="claude", peer="codex", task_id="t1", root=tmp_path)
     assert "You have the first turn" in text
+    assert "AGENT_MAILBOX_TASK_ID=t1" in text
     assert "Read the bootstrap context in the chat monitor pane" in text
     assert str(tmp_path / "t1" / "outbox" / "claude" / "000001.md") in text
     assert "from: claude" in text

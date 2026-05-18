@@ -42,20 +42,22 @@ def _content_text(content: Any) -> str:
     return ""
 
 
-def _user_payload_has_marker(obj: dict[str, Any], marker: str) -> bool:
+def _user_payload_has_marker(obj: dict[str, Any], markers: tuple[str, ...]) -> bool:
     typ = obj.get("type")
     payload = obj.get("payload") or {}
     if typ == "response_item":
         role = payload.get("role")
         if role not in (None, "", "user"):
             return False
-        return marker in _content_text(payload.get("content"))
+        text = _content_text(payload.get("content"))
+        return any(marker in text for marker in markers)
     if typ == "event_msg" and payload.get("type") == "user_message":
-        return marker in (str(payload.get("message") or "") + "\n" + _content_text(payload.get("content")))
+        text = str(payload.get("message") or "") + "\n" + _content_text(payload.get("content"))
+        return any(marker in text for marker in markers)
     return False
 
 
-def _scan_file(path: Path, *, marker: str, project_cwd: Path, max_lines: int) -> Optional[str]:
+def _scan_file(path: Path, *, markers: tuple[str, ...], project_cwd: Path, max_lines: int) -> Optional[str]:
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[:max_lines]
     if not lines:
         return None
@@ -75,11 +77,11 @@ def _scan_file(path: Path, *, marker: str, project_cwd: Path, max_lines: int) ->
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
-            if marker in line:
+            if any(marker in line for marker in markers):
                 marker_seen = True
                 break
             continue
-        if _user_payload_has_marker(obj, marker):
+        if _user_payload_has_marker(obj, markers):
             marker_seen = True
             break
     return str(session_id) if marker_seen else None
@@ -93,13 +95,13 @@ def find_codex_session_id(
     max_age_days: int = 7,
     max_lines: int = 200,
 ) -> Dict[str, Any]:
-    marker = f"AGENT_MAILBOX_TASK_ID={task_id}"
+    markers = (f"AGENT_MAILBOX_TASK_ID={task_id}", f"AGENT_MAILBOX_TASK_ID: {task_id}")
     root = sessions_root or (Path.home() / ".codex" / "sessions")
     scanned = 0
     for path in _iter_rollouts(root, max_age_days):
         scanned += 1
         try:
-            session_id = _scan_file(path, marker=marker, project_cwd=project_cwd, max_lines=max_lines)
+            session_id = _scan_file(path, markers=markers, project_cwd=project_cwd, max_lines=max_lines)
         except OSError:
             continue
         if session_id:

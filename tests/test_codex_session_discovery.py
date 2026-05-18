@@ -33,6 +33,13 @@ def test_find_codex_session_id_matches_marker_and_cwd(tmp_path):
     assert result["session_id"] == "right"
 
 
+def test_find_codex_session_id_accepts_colon_marker(tmp_path):
+    _make_rollout(tmp_path, 0, session_id="right", cwd="F:/proj", marker="AGENT_MAILBOX_TASK_ID: t1")
+    result = find_codex_session_id(task_id="t1", project_cwd=Path("F:/proj"), sessions_root=tmp_path)
+    assert result["status"] == "discovered"
+    assert result["session_id"] == "right"
+
+
 def test_find_codex_session_id_returns_failed(tmp_path):
     _make_rollout(tmp_path, 0, session_id="none", cwd="F:/proj")
     result = find_codex_session_id(task_id="t1", project_cwd=Path("F:/proj"), sessions_root=tmp_path)

@@ -20,6 +20,7 @@ def doorbell_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
     write_path = next_outbox_path(root, task_id, agent)
     return (
         f"{peer.capitalize()} has replied on agent-mailbox task {task_id}.\n\n"
+        f"Discovery marker: AGENT_MAILBOX_TASK_ID={task_id}\n\n"
         "Read the latest reply in the chat monitor pane.\n\n"
         f"To respond, write your reply to: {write_path}\n\n"
         "Required frontmatter (exact field names):\n"
@@ -39,6 +40,7 @@ def first_turn_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
     write_path = next_outbox_path(root, task_id, agent)
     return (
         f"You have the first turn on agent-mailbox task {task_id}.\n\n"
+        f"Discovery marker: AGENT_MAILBOX_TASK_ID={task_id}\n\n"
         "Read the bootstrap context in the chat monitor pane.\n\n"
         f"To respond, write your reply to: {write_path}\n\n"
         "Required frontmatter (exact field names):\n"
