@@ -137,6 +137,24 @@ Review body...
 
 Valid statuses are `continue`, `blocked`, `final`, and `error`. For `blocked`, include `Blocked on:` in the body. The relay imports completed outbox files and mirrors them to SQLite.
 
+### Mentioning The Sentinel In Body Prose
+
+The parser only treats the completion sentinel as active when it appears on its own line with no other content before or after it on that line. To mention the sentinel literally in prose, wrap it in inline code or a fenced code block.
+
+Valid literal mention:
+
+```markdown
+Mention `<!-- AGENT-MAILBOX:DONE -->` when explaining the format.
+```
+
+Invalid bare sentinel line inside body prose:
+
+```markdown
+Do not place this line before the true end of the message:
+<!-- AGENT-MAILBOX:DONE -->
+More body text here.
+```
+
 ## Role And Mode Protocol
 
 Agents are equal peers for design and review, but every non-terminal round must have one concrete owner. This prevents passive consensus where both agents agree and nobody acts.
@@ -176,6 +194,18 @@ Default coordinator is the agent that initialized the task or made the latest ma
 Rule: a non-terminal message must not end with agreement only. It must either name a concrete `Next action` with an owner and done condition, or declare `Blocked on`.
 
 The outbox importer rejects malformed files. Treat a malformed-outbox pause as a real protocol failure and fix the outbox file rather than bypassing the importer.
+
+## Migrating From v1
+
+Current mailbox databases use schema version 2. Opening a database with an absent, older, or newer schema version fails with `schema_version_mismatch` instead of auto-migrating.
+
+For a v1 database, write a fresh v2 database with:
+
+```powershell
+python <skill>\scripts\migrate_v1_to_v2.py <old-agent-chat.sqlite> <new-agent-chat.sqlite>
+```
+
+The migration copies rooms, messages, receipts, room state, pane/session metadata, and rebuilds `message_sources` for legacy outbox messages. Do not point the destination at the source file.
 
 ## Observability And Control
 
