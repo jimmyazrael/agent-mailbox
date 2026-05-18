@@ -28,12 +28,14 @@ def test_eval_scenarios_are_hard_and_structured():
         assert data["context"]
         assert data["workspace_files"]
         assert data["relay_version"] == "v2-outbox"
-        assert data["success"]["terminal_status"] in {"final", "paused"}
+        assert data["success"]["terminal_status"] in {"final", "paused", "error"}
+        if data["success"]["terminal_status"] == "error":
+            assert data["success"].get("terminal_error_reason"), f"{path.name} has terminal_status=error but no terminal_error_reason"
         assert "codex_discovery_status" not in data["success"]
         if data["success"].get("codex_discovery_required"):
             assert data["success"]["codex_discovery_result"] in {"n/a", "pending", "discovered", "failed"}
         categories.add(data["category"])
-    assert {"context-bootstrap", "blocked-resume", "idempotency", "recovery", "context-overload", "role-mode-protocol", "outbox-integrity", "outbox-safety-net"}.issubset(categories)
+    assert {"context-bootstrap", "blocked-resume", "idempotency", "recovery", "context-overload", "role-mode-protocol", "outbox-integrity", "outbox-safety-net", "safety-limit"}.issubset(categories)
 
 
 def test_mailbox_eval_refuses_real_without_env():
@@ -203,6 +205,106 @@ def test_mailbox_eval_participation_notes_catch_single_agent_false_pass(tmp_path
     assert "missing continue outbox from claude" in notes
     assert "missing final outbox from codex" in notes
     assert "final message author: claude, expected codex" in notes
+
+
+def test_mailbox_eval_owner_correlation_requires_declared_owner_to_write_next(tmp_path):
+    root = tmp_path / "mb"
+    init_db(root)
+    conn = connect_db(root)
+    init_room(conn, room_id="t1", name="T1", purpose="p", project_cwd=tmp_path, workspace="w", first_turn="claude")
+    add_participant(conn, "t1", "claude")
+    add_participant(conn, "t1", "codex")
+    send_message(
+        conn,
+        root=root,
+        room_id="t1",
+        from_agent="claude",
+        to_agent="codex",
+        kind="outbox",
+        status="continue",
+        summary="handoff",
+        body="Mode: EXECUTE\nOwner: codex\nNext action: write final\nDone when: final is written",
+    )
+    send_message(
+        conn,
+        root=root,
+        room_id="t1",
+        from_agent="claude",
+        to_agent="codex",
+        kind="outbox",
+        status="final",
+        summary="wrong owner",
+        body="passive consensus",
+    )
+
+    notes = mailbox_eval._owner_correlation_notes(
+        conn,
+        root,
+        "t1",
+        {"owner_correlation": {"from_outbox_author": "claude", "next_outbox_author_must_match": True}},
+    )
+
+    assert notes == ["owner_correlation: declared owner 'codex', next outbox by 'claude'"]
+
+
+def test_mailbox_eval_active_turn_injection_targets_current_turn(monkeypatch, tmp_path):
+    root = tmp_path / "mb"
+    init_db(root)
+    conn = connect_db(root)
+    init_room(conn, room_id="t1", name="T1", purpose="p", project_cwd=tmp_path, workspace="w", first_turn="claude")
+    add_participant(conn, "t1", "claude")
+    add_participant(conn, "t1", "codex")
+    set_pane(conn, "t1", "codex", pane_id=12)
+    send_message(
+        conn,
+        root=root,
+        room_id="t1",
+        from_agent="claude",
+        to_agent="codex",
+        kind="outbox",
+        status="continue",
+        summary="stale handoff",
+        body="OLD-CODE-41",
+    )
+    conn.close()
+    calls = []
+
+    def fake_run_mailbox(*args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, '{"ok": true}', "")
+
+    monkeypatch.setattr(mailbox_eval, "_run_mailbox", fake_run_mailbox)
+    terminal, _ = mailbox_eval._poll_to_terminal(
+        root,
+        "t1",
+        1,
+        {
+            "inject_after_first_outbox": {
+                "summary": "correction",
+                "content": "NEW-CODE-88",
+                "target": "next",
+            }
+        },
+    )
+
+    assert terminal == "timeout"
+    assert calls[:1] == [
+        (
+            "inject",
+            "--root",
+            str(root),
+            "--task-id",
+            "t1",
+            "--target",
+            "next",
+            "--summary",
+            "correction",
+            "--content",
+            "NEW-CODE-88",
+            "--format",
+            "json",
+        )
+    ]
 
 
 def test_am02_requires_codex_final_participation():

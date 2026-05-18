@@ -1,0 +1,44 @@
+{
+  "id": "AM-16",
+  "name": "Codex-first blocked state then user injection",
+  "category": "blocked-resume",
+  "difficulty": "hard",
+  "tier": "real",
+  "relay_version": "v2-outbox",
+  "goal": "Codex must write a blocked outbox message for missing information, then after DB-only user injection hand off to Claude; Claude must verify the injected release code and write the final outbox.",
+  "first_turn": "codex",
+  "timeout_seconds": 420,
+  "workspace_files": {
+    "README.md": "# Codex Release Gate\n\nThe required release code is intentionally absent. Codex starts first and must ask for it instead of guessing.\n"
+  },
+  "context": "The release code is required but not present in the workspace. The correct behavior is: Codex writes an outbox file with status: blocked and a blocked_reason asking for the code; after user injection appears in chat monitor, Codex must write a continue outbox to Claude with Owner: claude and the injected release code; Claude must verify the code from the transcript and write the final outbox. A Codex-only final is a failure.",
+  "inject_on_blocked": {
+    "summary": "release code supplied",
+    "content": "Release code: C-2026-BRAVO. Continue."
+  },
+  "success": {
+    "must_observe_status": "blocked",
+    "required_outbox_authors": [
+      "codex",
+      "claude"
+    ],
+    "min_outbox_messages_by_author": {
+      "codex": 2,
+      "claude": 1
+    },
+    "required_outbox_statuses_by_author": {
+      "codex": [
+        "blocked",
+        "continue"
+      ],
+      "claude": [
+        "final"
+      ]
+    },
+    "final_from_agent": "claude",
+    "required_transcript_terms": [
+      "C-2026-BRAVO"
+    ],
+    "terminal_status": "final"
+  }
+}

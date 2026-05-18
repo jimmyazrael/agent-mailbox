@@ -1,0 +1,21 @@
+{
+  "id": "AM-S08",
+  "name": "Max rounds cap fires closed",
+  "category": "safety-limit",
+  "difficulty": "hard",
+  "tier": "synthetic",
+  "relay_version": "v2-outbox",
+  "goal": "When a continue message would push the room beyond its configured max_rounds, the runtime must mark the room status='error' with blocked_reason='max_rounds_exceeded:{cap}' and write no further outbox.",
+  "first_turn": "claude",
+  "timeout_seconds": 240,
+  "workspace_files": {
+    "README.md": "# Max Rounds Cap Fires Closed\n\nThe safety limit must trip cleanly: error terminal status with a precise reason.\n"
+  },
+  "context": "This scenario is primarily synthetic. We set limits.max_rounds=1, write one continue message (round 0 to 1, allowed), then attempt a second continue (round 1 + 1 > 1, must trip). The correct result is rooms.status='error' and blocked_reason matching '^max_rounds_exceeded:1$'. AM-11 covers the cooperative no-loop case at the agent layer; this scenario covers the runtime cap independently of agent behavior.",
+  "synthetic_action": "force_max_rounds_exceeded",
+  "max_rounds_cap": 1,
+  "success": {
+    "terminal_status": "error",
+    "terminal_error_reason": "^max_rounds_exceeded:1$"
+  }
+}

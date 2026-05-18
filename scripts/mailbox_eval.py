@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-from agent_chat import add_participant, connect_db, export_transcript_md, init_room, send_message, set_pane
+from agent_chat import add_participant, connect_db, export_transcript_md, get_message_body, init_room, owner_from_protocol, room_state_set, send_message, set_pane
 from mailbox_lib import pid_exists
 from outbox import SENTINEL
 from pane_control import build_activate_pane_argv, build_get_text_argv, build_list_argv, build_send_text_argv
@@ -247,6 +248,31 @@ def _participation_notes(conn, task_id: str, success: dict[str, Any]) -> list[st
     return notes
 
 
+def _owner_correlation_notes(conn, root: Path, task_id: str, success: dict[str, Any]) -> list[str]:
+    spec = success.get("owner_correlation")
+    if not spec:
+        return []
+    src_author = spec["from_outbox_author"]
+    src_row = conn.execute(
+        "SELECT id FROM messages WHERE room_id=? AND kind='outbox' AND from_agent=? ORDER BY id ASC LIMIT 1",
+        (task_id, src_author),
+    ).fetchone()
+    if not src_row:
+        return [f"owner_correlation: no outbox from {src_author}"]
+    body = get_message_body(root, int(src_row["id"]))
+    declared_owner = owner_from_protocol(body)
+    if declared_owner is None:
+        return [f"owner_correlation: no Owner: line in first {src_author} outbox"]
+    next_row = conn.execute(
+        "SELECT from_agent FROM messages WHERE room_id=? AND kind='outbox' AND id > ? ORDER BY id ASC LIMIT 1",
+        (task_id, int(src_row["id"])),
+    ).fetchone()
+    actual_next = next_row["from_agent"] if next_row else None
+    if spec.get("next_outbox_author_must_match", True) and declared_owner != actual_next:
+        return [f"owner_correlation: declared owner {declared_owner!r}, next outbox by {actual_next!r}"]
+    return []
+
+
 def _send_extra_doorbells(root: Path, task_id: str, count: int) -> str | None:
     for _ in range(max(0, count)):
         turn = _current_turn(root, task_id)
@@ -298,6 +324,7 @@ def _poll_to_terminal(
     deadline = time.time() + timeout_s
     observed_blocked = False
     injected = False
+    active_turn_injected = False
     extra_doorbells_sent = False
     actions_done: set[str] = set()
     first_claude_seen = _last_message_from(root, task_id, "claude")
@@ -339,6 +366,31 @@ def _poll_to_terminal(
                 if _last_message_from(root, task_id, "claude") > first_claude_seen or _last_message_from(root, task_id, "codex") > first_codex_seen:
                     extra_doorbells_sent = True
                     if _send_extra_doorbells(root, task_id, extra_count) is not None:
+                        return "error", observed_blocked
+            active_inject = scenario.get("inject_after_first_outbox")
+            if active_inject and not active_turn_injected:
+                outbox_count = conn.execute(
+                    "SELECT COUNT(*) FROM messages WHERE room_id=? AND kind='outbox'",
+                    (task_id,),
+                ).fetchone()[0]
+                if outbox_count >= 1 and status == "waiting":
+                    active_turn_injected = True
+                    rv = _run_mailbox(
+                        "inject",
+                        "--root",
+                        str(root),
+                        "--task-id",
+                        task_id,
+                        "--target",
+                        active_inject.get("target", "next"),
+                        "--summary",
+                        active_inject.get("summary", "active-turn injection"),
+                        "--content",
+                        active_inject.get("content", ""),
+                        "--format",
+                        "json",
+                    )
+                    if rv.returncode != 0:
                         return "error", observed_blocked
             if ACTION_REDISCOVER_CODEX in scenario.get("actions", []) and ACTION_REDISCOVER_CODEX not in actions_done:
                 if _last_message_from(root, task_id, "codex") > first_codex_seen:
@@ -535,6 +587,51 @@ def _write_outbox(path: Path, *, from_agent: str, to_agent: str, status: str, su
     )
 
 
+def _write_malformed_outbox(path: Path, variant: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if variant == "invalid_status":
+        text = "\n".join([
+            "---",
+            "from: claude",
+            "to: codex",
+            "status: bogus_status_value",
+            "summary: invalid status variant",
+            "---",
+            "",
+            "body that will not be parsed because status is rejected first",
+            "",
+            SENTINEL,
+            "",
+        ])
+    elif variant == "missing_done_sentinel":
+        text = "\n".join([
+            "---",
+            "from: claude",
+            "to: codex",
+            "status: continue",
+            "summary: no sentinel",
+            "---",
+            "",
+            "body without the closing sentinel line",
+            "",
+        ])
+    elif variant == "missing_frontmatter_open":
+        text = "\n".join([
+            "from: claude",
+            "to: codex",
+            "status: continue",
+            "summary: no opening frontmatter fence",
+            "",
+            "body that runtime cannot parse without ---",
+            "",
+            SENTINEL,
+            "",
+        ])
+    else:
+        raise ValueError(f"unknown malformed variant: {variant}")
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
 def _run_synthetic_action(mailbox_root: Path, task_id: str, scenario: dict[str, Any], synthetic: str) -> tuple[str, list[str]]:
     conn = connect_db(mailbox_root)
     try:
@@ -697,18 +794,76 @@ def _run_synthetic_action(mailbox_root: Path, task_id: str, scenario: dict[str, 
                 summary="cleanup runtime accepted",
                 body="Cleanup runtime contract accepted after synthetic stale/active workspace exercise.",
             )
+        elif synthetic == "malformed_outbox":
+            variant = scenario.get("malformed_variant", "invalid_status")
+            path = mailbox_root / task_id / "outbox" / "claude" / "000001.md"
+            _write_malformed_outbox(path, variant)
+            conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id, bound_at) VALUES(?,?,?,?)", (task_id, "codex", 12, "synthetic"))
+            import tui_relay_v2
+
+            old_alive = tui_relay_v2._pane_alive
+            old_send = tui_relay_v2.send_doorbell
+            try:
+                tui_relay_v2._pane_alive = lambda *args, **kwargs: True
+                tui_relay_v2.send_doorbell = lambda **kwargs: True
+                tui_relay_v2.run_once(root=mailbox_root, task_id=task_id, wezterm_exe=Path("wezterm"))
+            finally:
+                tui_relay_v2._pane_alive = old_alive
+                tui_relay_v2.send_doorbell = old_send
+        elif synthetic == "force_max_rounds_exceeded":
+            cap = int(scenario.get("max_rounds_cap", 1))
+            room_state_set(conn, task_id, "limits", {"max_rounds": cap})
+            conn.commit()
+            send_message(
+                conn,
+                root=mailbox_root,
+                room_id=task_id,
+                from_agent="claude",
+                to_agent="codex",
+                kind="outbox",
+                status="continue",
+                summary="first turn within cap",
+                body="First continue turn — should succeed; round goes 0->1 with cap=1.",
+            )
+            try:
+                send_message(
+                    conn,
+                    root=mailbox_root,
+                    room_id=task_id,
+                    from_agent="codex",
+                    to_agent="claude",
+                    kind="outbox",
+                    status="continue",
+                    summary="second turn trips cap",
+                    body="Second continue turn — must trip max_rounds_exceeded since round=1 + 1 > 1.",
+                )
+            except RuntimeError as exc:
+                if "max_rounds_exceeded" not in str(exc):
+                    raise
         else:
             return "error", [f"unknown synthetic_action: {synthetic}"]
         relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
+        room_after = conn.execute("SELECT status, blocked_reason FROM rooms WHERE id=?", (task_id,)).fetchone()
         expected = scenario.get("success", {}).get("expected_pause_reason")
+        expected_terminal = scenario.get("success", {}).get("terminal_status")
+        expected_error_reason = scenario.get("success", {}).get("terminal_error_reason")
         outbox_count = conn.execute("SELECT COUNT(*) FROM messages WHERE room_id=? AND kind='outbox'", (task_id,)).fetchone()[0]
         notes = []
         if expected and (not relay or relay["pause_reason"] != expected):
             notes.append(f"pause reason {relay['pause_reason'] if relay else None!r}, expected {expected!r}")
+        if expected_terminal == "error":
+            actual_status = room_after["status"] if room_after else None
+            if actual_status != "error":
+                notes.append(f"room status {actual_status!r}, expected 'error'")
+            actual_reason = room_after["blocked_reason"] if room_after else None
+            if expected_error_reason and not re.match(expected_error_reason, actual_reason or ""):
+                notes.append(f"terminal_error_reason {actual_reason!r}, expected match {expected_error_reason!r}")
         if synthetic == "outbox_changed_after_import" and outbox_count != 1:
             notes.append(f"outbox message count {outbox_count}, expected 1")
         if synthetic == "missing_outbox_after_completion" and outbox_count != 0:
             notes.append(f"outbox message count {outbox_count}, expected 0")
+        if synthetic == "malformed_outbox" and outbox_count != 0:
+            notes.append(f"outbox message count {outbox_count}, expected 0 (malformed file must not import)")
         return ("pass" if not notes else "fail"), notes
     finally:
         conn.close()
@@ -795,12 +950,16 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
                 for row in conn.execute("SELECT * FROM agent_sessions WHERE room_id=?", (task_id,)).fetchall()
             }
             participation_notes = _participation_notes(conn, task_id, scenario.get("success", {}))
+            owner_notes = _owner_correlation_notes(conn, mailbox_root, task_id, scenario.get("success", {}))
         finally:
             conn.close()
         success = scenario.get("success", {})
         for term in success.get("required_transcript_terms", []):
             if term not in transcript:
                 notes.append(f"missing transcript term: {term}")
+        for term in success.get("forbidden_transcript_terms", []):
+            if term in transcript:
+                notes.append(f"forbidden transcript term present: {term}")
         if success.get("must_observe_status") == "blocked" and not observed_blocked:
             notes.append("blocked status was not observed")
         if "max_messages" in success and message_count > int(success["max_messages"]):
@@ -811,6 +970,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
         if codex_discovery_required and expected_discovery and codex_discovery_result != expected_discovery:
             notes.append(f"codex discovery result: {codex_discovery_result}, expected {expected_discovery}")
         notes.extend(participation_notes)
+        notes.extend(owner_notes)
         for rel in success.get("forbidden_file_changes", []):
             if _file_fingerprint(project, rel) != fingerprints.get(rel):
                 notes.append(f"forbidden file changed: {rel}")

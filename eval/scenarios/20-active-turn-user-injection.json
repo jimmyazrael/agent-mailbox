@@ -1,0 +1,51 @@
+{
+  "id": "AM-20",
+  "name": "Active-turn user injection is queued and reconciled",
+  "category": "blocked-resume",
+  "difficulty": "hard",
+  "tier": "real",
+  "relay_version": "v2-outbox",
+  "goal": "A user injection that arrives while the peer turn is active must be queued as canonical input, and the next agent must reconcile the stale peer outbox with the newer user instruction before finalizing.",
+  "first_turn": "claude",
+  "timeout_seconds": 480,
+  "workspace_files": {
+    "README.md": "# Active Turn Injection\n\nClaude starts with an outdated release note. A user correction will arrive while Codex is the active peer.\n",
+    "docs/release-note.md": "Initial instruction: report OLD-CODE-41. This file is intentionally stale once the user injection arrives.\n",
+    "docs/policy.md": "When a user injection is newer than a workspace note or peer handoff, the newer user instruction is canonical. The final response must explain that reconciliation.\n"
+  },
+  "context": "This is a v2 outbox active-turn injection evaluation. Required flow: Claude reads docs/release-note.md and writes one continue outbox to Codex with Owner: codex, handing off the stale OLD-CODE-41 instruction. While Codex is the active turn, the runner injects a newer user correction. Codex must treat the user injection as queued canonical input, explicitly reconcile it against Claude's stale handoff, and write the only final outbox. The final answer must include NEW-CODE-88 and must not present OLD-CODE-41 as the answer.",
+  "inject_after_first_outbox": {
+    "summary": "release code corrected during active turn",
+    "content": "Correction while Codex is active: replace OLD-CODE-41 with NEW-CODE-88. The newer user injection is canonical; reconcile it before finalizing.",
+    "target": "next"
+  },
+  "success": {
+    "required_outbox_authors": [
+      "claude",
+      "codex"
+    ],
+    "min_outbox_messages_by_author": {
+      "claude": 1,
+      "codex": 1
+    },
+    "required_outbox_statuses_by_author": {
+      "claude": [
+        "continue"
+      ],
+      "codex": [
+        "final"
+      ]
+    },
+    "final_from_agent": "codex",
+    "required_transcript_terms": [
+      "NEW-CODE-88",
+      "reconcile"
+    ],
+    "forbidden_transcript_terms": [
+      "Final answer: OLD-CODE-41",
+      "Answer: OLD-CODE-41"
+    ],
+    "max_messages": 4,
+    "terminal_status": "final"
+  }
+}

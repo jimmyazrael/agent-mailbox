@@ -1,0 +1,21 @@
+{
+  "id": "AM-S10",
+  "name": "Malformed outbox pause precision",
+  "category": "outbox-integrity",
+  "difficulty": "hard",
+  "tier": "synthetic",
+  "relay_version": "v2-outbox",
+  "goal": "When a writer produces a structurally malformed outbox file (invalid status value), the v2 observer must pause with the precise malformed_outbox:invalid_status reason and import zero messages.",
+  "first_turn": "claude",
+  "timeout_seconds": 240,
+  "workspace_files": {
+    "README.md": "# Malformed Outbox Pause Precision\n\nThe observer must reject files whose frontmatter does not pass schema validation, with a named pause reason.\n"
+  },
+  "context": "This scenario is primarily synthetic. A writer produces an outbox file with an invalid status value. The correct result is a paused relay with malformed_outbox:invalid_status and no imported message. Distinct from AM-13 (file changed after import) and AM-S01 (deferred schema-version skew).",
+  "synthetic_action": "malformed_outbox",
+  "malformed_variant": "invalid_status",
+  "success": {
+    "expected_pause_reason": "malformed_outbox:invalid_status",
+    "terminal_status": "paused"
+  }
+}

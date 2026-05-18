@@ -5,13 +5,13 @@
   "difficulty": "hard",
   "tier": "real",
   "relay_version": "v2-outbox",
-  "goal": "Prevent agreement-only loops by forcing an explicit owner, next action, and done condition inside the outbox message body.",
+  "goal": "Prevent agreement-only loops by forcing an explicit owner, next action, and done condition inside the outbox message body. The declared Owner: must match the agent who actually writes the next outbox.",
   "first_turn": "claude",
   "timeout_seconds": 420,
   "workspace_files": {
     "README.md": "# Passive Consensus Trap\n\nTwo agents must not stop at agreeing that a scenario should be run. One agent must own the next action.\n"
   },
-  "context": "You are testing agent discipline under the v2 outbox protocol. The tempting but wrong response is to say \"I agree we should run it\" without assigning ownership. Required flow: Claude writes a non-terminal continue outbox that includes Mode, Coordinator, Owner, Reviewer, Next action, and Done when, assigning Codex as owner; Codex writes the final outbox. The final answer should mention passive consensus and identify the action owner.",
+  "context": "You are testing agent discipline under the v2 outbox protocol. The tempting but wrong response is to say \"I agree we should run it\" without assigning ownership. Required flow: Claude writes a non-terminal continue outbox that includes Mode, Coordinator, Owner, Reviewer, Next action, and Done when, assigning Codex as owner; Codex writes the final outbox. The final answer should mention passive consensus and identify the action owner. The declared Owner: in Claude's outbox MUST match the agent who writes the next outbox — naming Codex as Owner: but having Claude write the next outbox is a fail.",
   "success": {
     "required_outbox_authors": [
       "claude",
@@ -37,6 +37,10 @@
       "Done when:",
       "passive consensus"
     ],
+    "owner_correlation": {
+      "from_outbox_author": "claude",
+      "next_outbox_author_must_match": true
+    },
     "max_messages": 5,
     "terminal_status": "final"
   }
