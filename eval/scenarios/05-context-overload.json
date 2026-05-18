@@ -14,8 +14,25 @@
     "notes/needle.md": "Relevant clue: the correct output must say SAFE-HARBOR-17 and no files should be edited.\n",
     "src/main.py": "print('important file - do not edit')\n"
   },
-  "context": "This is a v2 outbox context-overload evaluation. Agents must find the relevant clue and avoid editing files. Final answer must include SAFE-HARBOR-17.",
+  "context": "This is a v2 outbox context-overload evaluation. Agents must find the relevant clue and avoid editing files. Required flow: Claude writes one continue outbox to Codex identifying the relevant clue; Codex verifies the clue and writes the final outbox. Final answer must include SAFE-HARBOR-17.",
   "success": {
+    "required_outbox_authors": [
+      "claude",
+      "codex"
+    ],
+    "min_outbox_messages_by_author": {
+      "claude": 1,
+      "codex": 1
+    },
+    "required_outbox_statuses_by_author": {
+      "claude": [
+        "continue"
+      ],
+      "codex": [
+        "final"
+      ]
+    },
+    "final_from_agent": "codex",
     "required_transcript_terms": [
       "SAFE-HARBOR-17"
     ],

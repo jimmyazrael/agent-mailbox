@@ -10,12 +10,30 @@
   "workspace_files": {
     "README.md": "# Rediscovery\n\nThis scenario validates AGENT_MAILBOX_TASK_ID marker propagation for v2 safety checks.\n"
   },
-  "context": "The doorbell must include the literal AGENT_MAILBOX_TASK_ID marker so Codex rollout discovery can find the session later. Use outbox files for agent-to-agent replies. The final response should mention rediscovery and session-log safety.",
+  "context": "The doorbell must include the literal AGENT_MAILBOX_TASK_ID marker so Codex rollout discovery can find the session later. Required flow: Claude writes a continue outbox to Codex asking for a non-terminal rediscovery acknowledgement; Codex writes a continue outbox that mentions rediscovery and session-log safety; after rediscovery runs, Claude writes the final outbox. Use outbox files for agent-to-agent replies.",
   "actions": [
     "rediscover_codex_after_first_codex_turn"
   ],
   "success": {
     "codex_discovery_status": "discovered",
+    "required_outbox_authors": [
+      "claude",
+      "codex"
+    ],
+    "min_outbox_messages_by_author": {
+      "claude": 2,
+      "codex": 1
+    },
+    "required_outbox_statuses_by_author": {
+      "claude": [
+        "continue",
+        "final"
+      ],
+      "codex": [
+        "continue"
+      ]
+    },
+    "final_from_agent": "claude",
     "required_transcript_terms": [
       "rediscovery"
     ],

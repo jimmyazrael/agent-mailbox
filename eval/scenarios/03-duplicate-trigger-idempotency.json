@@ -10,9 +10,26 @@
   "workspace_files": {
     "README.md": "# Idempotency Trap\n\nThe task is simple, but the relay may be asked to send the doorbell twice.\n"
   },
-  "context": "This is a v2 outbox idempotency test. If the same turn is already handled, do not write duplicate outbox responses. The final answer should mention idempotency and one-shot doorbells.",
+  "context": "This is a v2 outbox idempotency test. If the same turn is already handled, do not write duplicate outbox responses. Required flow: Claude writes one continue outbox to Codex asking Codex to confirm idempotency and one-shot doorbells; Codex writes the final outbox. The final answer should mention idempotency and one-shot doorbells.",
   "extra_doorbells": 1,
   "success": {
+    "required_outbox_authors": [
+      "claude",
+      "codex"
+    ],
+    "min_outbox_messages_by_author": {
+      "claude": 1,
+      "codex": 1
+    },
+    "required_outbox_statuses_by_author": {
+      "claude": [
+        "continue"
+      ],
+      "codex": [
+        "final"
+      ]
+    },
+    "final_from_agent": "codex",
     "required_transcript_terms": [
       "idempotency",
       "one-shot"

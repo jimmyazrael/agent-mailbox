@@ -10,8 +10,25 @@
   "workspace_files": {
     "README.md": "# Passive Consensus Trap\n\nTwo agents must not stop at agreeing that a scenario should be run. One agent must own the next action.\n"
   },
-  "context": "You are testing agent discipline under the v2 outbox protocol. The tempting but wrong response is to say \"I agree we should run it\" without assigning ownership. The correct non-terminal outbox body should include Mode, Coordinator, Owner, Reviewer, Next action, and Done when. The final answer should mention passive consensus and identify the action owner.",
+  "context": "You are testing agent discipline under the v2 outbox protocol. The tempting but wrong response is to say \"I agree we should run it\" without assigning ownership. Required flow: Claude writes a non-terminal continue outbox that includes Mode, Coordinator, Owner, Reviewer, Next action, and Done when, assigning Codex as owner; Codex writes the final outbox. The final answer should mention passive consensus and identify the action owner.",
   "success": {
+    "required_outbox_authors": [
+      "claude",
+      "codex"
+    ],
+    "min_outbox_messages_by_author": {
+      "claude": 1,
+      "codex": 1
+    },
+    "required_outbox_statuses_by_author": {
+      "claude": [
+        "continue"
+      ],
+      "codex": [
+        "final"
+      ]
+    },
+    "final_from_agent": "codex",
     "required_transcript_terms": [
       "Mode:",
       "Owner:",

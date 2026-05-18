@@ -13,6 +13,24 @@
   "context": "You are testing duplicate-doorbell resilience under v2. A duplicate doorbell may fire for the same latest state while a peer turn is active. Respond to each requested turn exactly once by writing one completed outbox file. Required flow: Claude first asks Codex to confirm duplicate-doorbell handling; Codex writes exactly one confirmation; Claude then writes final. The final answer should mention mid-handoff duplicate doorbell resilience.",
   "extra_doorbells": 1,
   "success": {
+    "required_outbox_authors": [
+      "claude",
+      "codex"
+    ],
+    "min_outbox_messages_by_author": {
+      "claude": 2,
+      "codex": 1
+    },
+    "required_outbox_statuses_by_author": {
+      "claude": [
+        "continue",
+        "final"
+      ],
+      "codex": [
+        "continue"
+      ]
+    },
+    "final_from_agent": "claude",
     "required_transcript_terms": [
       "mid-handoff duplicate doorbell"
     ],

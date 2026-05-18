@@ -204,6 +204,28 @@ def test_am02_requires_codex_final_participation():
     assert "Claude-only final is a failure" in data["context"]
 
 
+def test_real_conversation_scenarios_require_participation_contracts():
+    audited = ["AM-03", "AM-04", "AM-05", "AM-06", "AM-07", "AM-09", "AM-11", "AM-12"]
+    by_id = {json.loads(path.read_text(encoding="utf-8"))["id"]: json.loads(path.read_text(encoding="utf-8")) for path in SCENARIOS.glob("*.json")}
+    for scenario_id in audited:
+        success = by_id[scenario_id]["success"]
+        assert set(success["required_outbox_authors"]) == {"claude", "codex"}
+        assert set(success["min_outbox_messages_by_author"]) == {"claude", "codex"}
+        assert set(success["required_outbox_statuses_by_author"]) == {"claude", "codex"}
+        assert success["final_from_agent"] in {"claude", "codex"}
+        assert "final" in success["required_outbox_statuses_by_author"][success["final_from_agent"]]
+
+
+def test_am04_rediscovery_requires_codex_outbox_after_rediscovery():
+    data = json.loads((SCENARIOS / "04-codex-rediscovery.json").read_text(encoding="utf-8"))
+    success = data["success"]
+    assert success["codex_discovery_status"] == "discovered"
+    assert success["min_outbox_messages_by_author"]["codex"] >= 1
+    assert "continue" in success["required_outbox_statuses_by_author"]["codex"]
+    assert success["final_from_agent"] == "claude"
+    assert "after rediscovery runs" in data["context"]
+
+
 def test_mailbox_eval_reports_paused_relay_reason(tmp_path):
     root = tmp_path / "mb"
     init_db(root)
