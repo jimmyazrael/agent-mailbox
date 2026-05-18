@@ -204,6 +204,17 @@ def test_am02_requires_codex_final_participation():
     assert "Claude-only final is a failure" in data["context"]
 
 
+def test_am05_requires_codex_final_participation():
+    data = json.loads((SCENARIOS / "05-context-overload.json").read_text(encoding="utf-8"))
+    success = data["success"]
+    assert success["final_from_agent"] == "codex"
+    assert "codex" in success["required_outbox_authors"]
+    assert success["min_outbox_messages_by_author"]["codex"] >= 1
+    assert "final" in success["required_outbox_statuses_by_author"]["codex"]
+    assert "Claude must not write final" in data["context"]
+    assert "Claude-only final is a scenario failure" in data["context"] or "Claude final is a scenario failure" in data["context"]
+
+
 def test_real_conversation_scenarios_require_participation_contracts():
     audited = ["AM-03", "AM-04", "AM-05", "AM-06", "AM-07", "AM-09", "AM-11", "AM-12"]
     by_id = {json.loads(path.read_text(encoding="utf-8"))["id"]: json.loads(path.read_text(encoding="utf-8")) for path in SCENARIOS.glob("*.json")}
