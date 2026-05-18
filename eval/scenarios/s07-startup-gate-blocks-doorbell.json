@@ -1,0 +1,20 @@
+{
+  "id": "AM-S07",
+  "name": "Startup gate blocks doorbell",
+  "category": "outbox-integrity",
+  "difficulty": "hard",
+  "tier": "synthetic",
+  "relay_version": "v2-outbox",
+  "goal": "When the target pane is not yet ready (process not alive), the relay must NOT fire a doorbell. It must pause with panes_lost:<turn> instead. The honest synthetic version of AM-09's startup-gate claim.",
+  "first_turn": "claude",
+  "timeout_seconds": 240,
+  "workspace_files": {
+    "README.md": "# Startup Gate Blocks Doorbell\n\nIf an agent's pane is not yet alive, the relay must not send a doorbell to that pane.\n"
+  },
+  "context": "Synthetic scenario. Replaces AM-09 (recovery-startup-gate), which asserted on agent testimony rather than on actual relay state. AM-S07 forces _pane_alive() to return False, runs the relay once, and asserts no doorbell was sent and the relay paused with panes_lost:codex.",
+  "synthetic_action": "force_startup_gate_blocks_doorbell",
+  "success": {
+    "expected_pause_reason": "panes_lost:codex",
+    "terminal_status": "paused"
+  }
+}

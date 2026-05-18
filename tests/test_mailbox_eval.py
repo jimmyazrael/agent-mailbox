@@ -35,7 +35,7 @@ def test_eval_scenarios_are_hard_and_structured():
         if data["success"].get("codex_discovery_required"):
             assert data["success"]["codex_discovery_result"] in {"n/a", "pending", "discovered", "failed"}
         categories.add(data["category"])
-    assert {"context-bootstrap", "blocked-resume", "idempotency", "recovery", "context-overload", "role-mode-protocol", "outbox-integrity", "outbox-safety-net", "safety-limit"}.issubset(categories)
+    assert {"context-bootstrap", "blocked-resume", "idempotency", "context-overload", "role-mode-protocol", "outbox-integrity", "outbox-safety-net", "safety-limit"}.issubset(categories)
 
 
 def test_mailbox_eval_refuses_real_without_env():
@@ -342,7 +342,7 @@ def test_am07_requires_single_continue_per_agent_and_claude_final():
 
 
 def test_real_conversation_scenarios_require_participation_contracts():
-    audited = ["AM-03", "AM-04", "AM-05", "AM-06", "AM-07", "AM-09", "AM-11", "AM-12"]
+    audited = ["AM-03", "AM-04", "AM-05", "AM-06", "AM-07", "AM-11", "AM-12"]
     by_id = {json.loads(path.read_text(encoding="utf-8"))["id"]: json.loads(path.read_text(encoding="utf-8")) for path in SCENARIOS.glob("*.json")}
     for scenario_id in audited:
         success = by_id[scenario_id]["success"]

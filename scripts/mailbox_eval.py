@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time as time_module
 import time
 from contextlib import redirect_stdout
 from dataclasses import dataclass
@@ -271,6 +273,25 @@ def _owner_correlation_notes(conn, root: Path, task_id: str, success: dict[str, 
     if spec.get("next_outbox_author_must_match", True) and declared_owner != actual_next:
         return [f"owner_correlation: declared owner {declared_owner!r}, next outbox by {actual_next!r}"]
     return []
+
+
+def _source_cardinality_notes(conn, task_id: str, success: dict[str, Any]) -> list[str]:
+    spec = success.get("source_cardinality")
+    if not spec:
+        return []
+    notes: list[str] = []
+    rows = conn.execute(
+        "SELECT source_path, COUNT(*) AS n FROM message_sources WHERE room_id=? AND source_path IS NOT NULL GROUP BY source_path",
+        (task_id,),
+    ).fetchall()
+    for row in rows:
+        if int(row["n"]) != 1:
+            notes.append(f"source_cardinality: source_path {row['source_path']!r} has {row['n']} rows, expected 1")
+    if spec.get("min_outbox_files") is not None:
+        outbox_files = sum(1 for r in rows if "outbox" in (r["source_path"] or ""))
+        if outbox_files < int(spec["min_outbox_files"]):
+            notes.append(f"source_cardinality: only {outbox_files} outbox files imported, expected >= {spec['min_outbox_files']}")
+    return notes
 
 
 def _send_extra_doorbells(root: Path, task_id: str, count: int) -> str | None:
@@ -840,6 +861,117 @@ def _run_synthetic_action(mailbox_root: Path, task_id: str, scenario: dict[str, 
             except RuntimeError as exc:
                 if "max_rounds_exceeded" not in str(exc):
                     raise
+        elif synthetic == "force_startup_gate_blocks_doorbell":
+            # Seed an outbox so there's something to send a doorbell about, register a pane,
+            # then run the relay with _pane_alive forced to False — relay must pause with
+            # panes_lost:<turn> and NOT update the doorbell tracking state.
+            send_message(
+                conn,
+                root=mailbox_root,
+                room_id=task_id,
+                from_agent="claude",
+                to_agent="codex",
+                kind="outbox",
+                status="continue",
+                summary="seed outbox for startup-gate test",
+                body="Codex pane is not yet ready; relay must withhold doorbell.",
+            )
+            conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id, bound_at) VALUES(?,?,?,?)", (task_id, "codex", 99, "synthetic"))
+            conn.commit()
+            import tui_relay_v2
+
+            old_alive = tui_relay_v2._pane_alive
+            old_send = tui_relay_v2.send_doorbell
+            doorbell_calls: list[tuple] = []
+            try:
+                tui_relay_v2._pane_alive = lambda *args, **kwargs: False
+                tui_relay_v2.send_doorbell = lambda **kwargs: (doorbell_calls.append(kwargs) or True)
+                tui_relay_v2.run_once(root=mailbox_root, task_id=task_id, wezterm_exe=Path("wezterm"))
+            finally:
+                tui_relay_v2._pane_alive = old_alive
+                tui_relay_v2.send_doorbell = old_send
+            if doorbell_calls:
+                return "fail", [f"startup_gate: doorbell fired {len(doorbell_calls)} time(s) while pane was not ready"]
+        elif synthetic == "concurrent_doorbell_race":
+            path = mailbox_root / task_id / "outbox" / "claude" / "000001.md"
+            _write_outbox(path, from_agent="claude", to_agent="codex", status="continue", summary="race seed", body="Concurrent relay polls must import and signal this once.")
+            conn.execute("INSERT OR REPLACE INTO panes(room_id, pane_role, pane_id, bound_at) VALUES(?,?,?,?)", (task_id, "codex", 12, "synthetic"))
+            conn.commit()
+            import tui_relay_v2
+
+            old_alive = tui_relay_v2._pane_alive
+            old_send = tui_relay_v2.send_doorbell
+            doorbell_calls: list[dict[str, Any]] = []
+            errors: list[str] = []
+            gate = threading.Barrier(2)
+
+            def blocked_send(**kwargs):
+                doorbell_calls.append(kwargs)
+                time_module.sleep(0.2)
+                return True
+
+            def run_racer():
+                try:
+                    gate.wait(timeout=2)
+                    tui_relay_v2.run_once(root=mailbox_root, task_id=task_id, wezterm_exe=Path("wezterm"))
+                except Exception as exc:
+                    errors.append(str(exc))
+
+            try:
+                tui_relay_v2._pane_alive = lambda *args, **kwargs: True
+                tui_relay_v2.send_doorbell = blocked_send
+                threads = [threading.Thread(target=run_racer) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join(timeout=5)
+            finally:
+                tui_relay_v2._pane_alive = old_alive
+                tui_relay_v2.send_doorbell = old_send
+            if errors:
+                return "fail", [f"concurrent_doorbell_race errors: {errors}"]
+            if len(doorbell_calls) != 1:
+                return "fail", [f"concurrent_doorbell_race doorbells {len(doorbell_calls)}, expected 1"]
+            source_count = conn.execute("SELECT COUNT(*) FROM message_sources WHERE room_id=? AND source_type='outbox'", (task_id,)).fetchone()[0]
+            outbox_count = conn.execute("SELECT COUNT(*) FROM messages WHERE room_id=? AND kind='outbox'", (task_id,)).fetchone()[0]
+            if source_count != 1 or outbox_count != 1:
+                return "fail", [f"concurrent_doorbell_race imported outboxes={outbox_count}, sources={source_count}; expected 1 each"]
+            relay_state = conn.execute("SELECT last_doorbell_message_id FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
+            if not relay_state or int(relay_state["last_doorbell_message_id"] or 0) <= 0:
+                return "fail", ["concurrent_doorbell_race: doorbell state was not recorded"]
+        elif synthetic == "outbox_canonical_policy":
+            send_message(
+                conn,
+                root=mailbox_root,
+                room_id=task_id,
+                from_agent="claude",
+                to_agent="codex",
+                kind="message",
+                status="continue",
+                summary="non-canonical prose",
+                body="Chat-side prose says the answer is CHAT-CLAIM-42.",
+                increment_round=False,
+                next_turn="claude",
+            )
+            path = mailbox_root / task_id / "outbox" / "claude" / "000001.md"
+            _write_outbox(path, from_agent="claude", to_agent="codex", status="continue", summary="canonical outbox", body="Canonical outbox says the answer is OUTBOX-CANON-77.")
+            import tui_relay_v2
+
+            old_alive = tui_relay_v2._pane_alive
+            old_send = tui_relay_v2.send_doorbell
+            try:
+                tui_relay_v2._pane_alive = lambda *args, **kwargs: True
+                tui_relay_v2.send_doorbell = lambda **kwargs: True
+                tui_relay_v2.run_once(root=mailbox_root, task_id=task_id, wezterm_exe=Path("wezterm"))
+            finally:
+                tui_relay_v2._pane_alive = old_alive
+                tui_relay_v2.send_doorbell = old_send
+            latest = conn.execute("SELECT kind, from_agent, status, body_text FROM messages WHERE room_id=? ORDER BY id DESC LIMIT 1", (task_id,)).fetchone()
+            if not latest or latest["kind"] != "outbox" or "OUTBOX-CANON-77" not in (latest["body_text"] or ""):
+                return "fail", ["outbox_canonical_policy: latest canonical message was not the imported outbox"]
+            source_count = conn.execute("SELECT COUNT(*) FROM message_sources WHERE room_id=? AND source_type='outbox'", (task_id,)).fetchone()[0]
+            if source_count != 1:
+                return "fail", [f"outbox_canonical_policy: outbox source count {source_count}, expected 1"]
         else:
             return "error", [f"unknown synthetic_action: {synthetic}"]
         relay = conn.execute("SELECT paused, pause_reason FROM tui_relay_state WHERE room_id=?", (task_id,)).fetchone()
@@ -953,6 +1085,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             }
             participation_notes = _participation_notes(conn, task_id, scenario.get("success", {}))
             owner_notes = _owner_correlation_notes(conn, mailbox_root, task_id, scenario.get("success", {}))
+            cardinality_notes = _source_cardinality_notes(conn, task_id, scenario.get("success", {}))
         finally:
             conn.close()
         success = scenario.get("success", {})
@@ -973,6 +1106,7 @@ def run_scenario(scenario: dict[str, Any], *, keep: bool = False, launch_real: b
             notes.append(f"codex discovery result: {codex_discovery_result}, expected {expected_discovery}")
         notes.extend(participation_notes)
         notes.extend(owner_notes)
+        notes.extend(cardinality_notes)
         for rel in success.get("forbidden_file_changes", []):
             if _file_fingerprint(project, rel) != fingerprints.get(rel):
                 notes.append(f"forbidden file changed: {rel}")

@@ -1,8 +1,9 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
 
-from agent_chat import add_participant, connect_db, init_db, init_room
+from agent_chat import add_participant, connect_db, init_db, init_room, send_message
 from outbox import OutboxError, import_outbox_messages, next_outbox_path, parse_outbox_message
 
 
@@ -107,6 +108,31 @@ def test_import_outbox_messages_writes_messages_and_sources_once(tmp_path):
     source = conn.execute("SELECT * FROM message_sources WHERE message_id=?", (msg["id"],)).fetchone()
     assert source["source_type"] == "outbox"
     assert source["source_path"] == "t1\\outbox\\claude\\000001.md" or source["source_path"] == "t1/outbox/claude/000001.md"
+
+
+def test_import_outbox_messages_treats_concurrent_duplicate_as_idempotent(tmp_path, monkeypatch):
+    conn = _seed(tmp_path)
+    path = tmp_path / "t1" / "outbox" / "claude" / "000001.md"
+    _write(path, _message())
+    real_send = send_message
+    calls = {"n": 0}
+
+    def racing_send(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            other = connect_db(tmp_path)
+            try:
+                real_send(other, **kwargs)
+            finally:
+                other.close()
+            raise sqlite3.IntegrityError("UNIQUE constraint failed: message_sources.room_id, message_sources.source_type, message_sources.source_path")
+        return real_send(*args, **kwargs)
+
+    monkeypatch.setattr("outbox.send_message", racing_send)
+
+    assert import_outbox_messages(conn, root=tmp_path, room_id="t1") == []
+    assert conn.execute("SELECT COUNT(*) FROM messages WHERE room_id='t1' AND kind='outbox'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM message_sources WHERE room_id='t1' AND source_type='outbox'").fetchone()[0] == 1
 
 
 def test_import_outbox_messages_ignores_pending_and_draft(tmp_path):

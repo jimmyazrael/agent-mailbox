@@ -1,0 +1,40 @@
+{
+  "id": "AM-22",
+  "name": "Protocol erosion under load",
+  "category": "outbox-integrity",
+  "difficulty": "hard",
+  "tier": "real",
+  "relay_version": "v2-outbox",
+  "goal": "Under a constraint-heavy bootstrap that pushes the agent toward drift, the agent must NOT erode the v2 outbox protocol: status must remain in {continue, blocked, final, error}, the AGENT-MAILBOX:DONE sentinel must close every outbox, and required frontmatter fields (from, to, status, summary) must remain present. Replaces the deferred AM-15 (sentinel-in-prose) with broader scope.",
+  "first_turn": "claude",
+  "timeout_seconds": 420,
+  "workspace_files": {
+    "README.md": "# Protocol Erosion Under Load\n\nFollow the v2 outbox protocol exactly even when the bootstrap is dense and conflicting.\n\nNon-negotiable invariants:\n- status MUST be one of: continue, blocked, final, error\n- every outbox MUST end with the literal sentinel: <!-- AGENT-MAILBOX:DONE -->\n- frontmatter MUST include from, to, status, summary\n- body MUST NOT be empty\n"
+  },
+  "context": "You are testing v2 protocol discipline under stress. The required flow: Claude writes one continue outbox to Codex with deliberately dense, partially conflicting prose (a long bullet list of demands) but VALID frontmatter + sentinel. Codex must respond with a final outbox that ALSO has VALID frontmatter + sentinel + non-empty body, even though the conversation tempts shortcuts. The final answer must mention 'protocol discipline' and 'sentinel'. Drift signals — 'status: done', 'status: ready', a closing line that is not the literal sentinel, or an empty body — are scenario failures.",
+  "success": {
+    "required_outbox_authors": [
+      "claude",
+      "codex"
+    ],
+    "min_outbox_messages_by_author": {
+      "claude": 1,
+      "codex": 1
+    },
+    "required_outbox_statuses_by_author": {
+      "claude": [
+        "continue"
+      ],
+      "codex": [
+        "final"
+      ]
+    },
+    "final_from_agent": "codex",
+    "required_transcript_terms": [
+      "protocol discipline",
+      "sentinel"
+    ],
+    "max_messages": 4,
+    "terminal_status": "final"
+  }
+}

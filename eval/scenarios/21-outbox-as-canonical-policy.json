@@ -1,0 +1,29 @@
+{
+  "id": "AM-21",
+  "name": "Outbox is canonical over chat prose",
+  "category": "outbox-integrity",
+  "difficulty": "hard",
+  "tier": "synthetic",
+  "relay_version": "v2-outbox",
+  "goal": "When non-outbox prose conflicts with a completed outbox file, the imported outbox message must be the canonical handoff state.",
+  "first_turn": "claude",
+  "timeout_seconds": 240,
+  "workspace_files": {
+    "README.md": "# Outbox Canonical Policy\n\nThe mailbox transcript may contain non-canonical prose, but the v2 relay must use completed outbox files as the handoff source of truth.\n"
+  },
+  "context": "Synthetic scenario. Seeds a non-outbox Claude message claiming CHAT-CLAIM-42, then imports a completed Claude outbox claiming OUTBOX-CANON-77. The scenario asserts the latest canonical handoff is the imported outbox, not the earlier prose.",
+  "synthetic_action": "outbox_canonical_policy",
+  "success": {
+    "required_transcript_terms": [
+      "OUTBOX-CANON-77"
+    ],
+    "forbidden_transcript_terms": [
+      "Final answer: CHAT-CLAIM-42",
+      "Answer: CHAT-CLAIM-42"
+    ],
+    "source_cardinality": {
+      "min_outbox_files": 1
+    },
+    "terminal_status": "final"
+  }
+}

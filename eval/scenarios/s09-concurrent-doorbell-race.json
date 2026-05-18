@@ -1,0 +1,22 @@
+{
+  "id": "AM-S09",
+  "name": "Concurrent doorbell race",
+  "category": "idempotency",
+  "difficulty": "hard",
+  "tier": "synthetic",
+  "relay_version": "v2-outbox",
+  "goal": "Concurrent relay polls for the same outbox state must import exactly one message source and send exactly one doorbell.",
+  "first_turn": "claude",
+  "timeout_seconds": 240,
+  "workspace_files": {
+    "README.md": "# Concurrent Doorbell Race\n\nTwo relay polls race on the same completed outbox file. The runtime must keep the import and doorbell signal one-shot.\n"
+  },
+  "context": "Synthetic scenario. Writes one completed Claude outbox, runs two relay polls concurrently with send_doorbell held briefly, and asserts exactly one doorbell call plus one imported outbox source. This covers the race shape that sequential duplicate-doorbell scenarios do not exercise.",
+  "synthetic_action": "concurrent_doorbell_race",
+  "success": {
+    "source_cardinality": {
+      "min_outbox_files": 1
+    },
+    "terminal_status": "final"
+  }
+}

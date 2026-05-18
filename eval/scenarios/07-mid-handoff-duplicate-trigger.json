@@ -36,6 +36,9 @@
       "mid-handoff duplicate doorbell"
     ],
     "max_messages": 4,
-    "terminal_status": "final"
+    "terminal_status": "final",
+    "source_cardinality": {
+      "min_outbox_files": 3
+    }
   }
 }

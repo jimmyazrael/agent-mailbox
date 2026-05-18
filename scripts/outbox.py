@@ -137,20 +137,30 @@ def import_outbox_messages(conn: sqlite3.Connection, *, root: Path, room_id: str
             raise OutboxError("outbox_file_changed_after_import", path)
         if has_message_source(conn, room_id=room_id, source_type="outbox", source_hash=msg.source_hash):
             continue
-        rv = send_message(
-            conn,
-            root=root,
-            room_id=room_id,
-            from_agent=msg.from_agent,
-            to_agent=msg.to_agent,
-            kind="outbox",
-            status=msg.status,
-            summary=msg.summary,
-            body=msg.body,
-            blocked_reason=msg.blocked_reason,
-            source_type="outbox",
-            source_path=rel_path,
-            source_hash=msg.source_hash,
-        )
+        try:
+            rv = send_message(
+                conn,
+                root=root,
+                room_id=room_id,
+                from_agent=msg.from_agent,
+                to_agent=msg.to_agent,
+                kind="outbox",
+                status=msg.status,
+                summary=msg.summary,
+                body=msg.body,
+                blocked_reason=msg.blocked_reason,
+                source_type="outbox",
+                source_path=rel_path,
+                source_hash=msg.source_hash,
+            )
+        except sqlite3.IntegrityError:
+            existing_path_hash = message_source_hash_for_path(conn, room_id=room_id, source_type="outbox", source_path=rel_path)
+            if existing_path_hash == msg.source_hash:
+                continue
+            if existing_path_hash is not None:
+                raise OutboxError("outbox_file_changed_after_import", path)
+            if has_message_source(conn, room_id=room_id, source_type="outbox", source_hash=msg.source_hash):
+                continue
+            raise
         imported.append({"message_id": rv["message_id"], "path": path, "message": msg})
     return imported
