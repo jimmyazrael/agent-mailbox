@@ -38,6 +38,7 @@ def _outbox_text(author="codex", peer="claude"):
 def test_doorbell_text_points_to_outbox_and_sentinel(tmp_path):
     text = doorbell_text(agent="codex", peer="claude", task_id="t1", root=tmp_path)
     assert "AGENT_MAILBOX_TASK_ID=t1" in text
+    assert "Claude has replied" in text
     assert "Read the latest reply in the chat monitor pane" in text
     assert str(tmp_path / "t1" / "outbox" / "codex" / "000001.md") in text
     assert "<!-- AGENT-MAILBOX:DONE -->" in text
@@ -45,6 +46,15 @@ def test_doorbell_text_points_to_outbox_and_sentinel(tmp_path):
     assert "from: codex" in text
     assert "to: claude" in text
     assert "status: <continue | blocked | final | error>" in text
+
+
+def test_doorbell_text_distinguishes_user_inject_from_peer_reply(tmp_path):
+    peer_text = doorbell_text(agent="codex", peer="claude", task_id="t1", root=tmp_path, latest_kind="outbox", latest_from="claude")
+    assert peer_text.startswith("Claude has replied")
+
+    user_text = doorbell_text(agent="codex", peer="claude", task_id="t1", root=tmp_path, latest_kind="inject", latest_from="user")
+    assert user_text.startswith("The user has injected")
+    assert "Claude has replied" not in user_text
 
 
 def test_doorbell_text_includes_routing_filter(tmp_path):

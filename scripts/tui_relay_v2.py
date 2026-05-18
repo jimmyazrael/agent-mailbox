@@ -16,11 +16,16 @@ from tui_launcher import lookup_pane, parse_wezterm_list
 MISSING_OUTBOX_GRACE_S = 180.0
 
 
-def doorbell_text(*, agent: str, peer: str, task_id: str, root: Path) -> str:
+def doorbell_text(*, agent: str, peer: str, task_id: str, root: Path, latest_kind: str = "outbox", latest_from: str = "") -> str:
     write_path = next_outbox_path(root, task_id, agent)
+    if latest_kind == "inject":
+        sender_label = (latest_from or "user").capitalize() if (latest_from or "user") != "user" else "The user"
+        opening = f"{sender_label} has injected a message on agent-mailbox task {task_id}.\n\n"
+    else:
+        opening = f"{peer.capitalize()} has replied on agent-mailbox task {task_id}.\n\n"
     return (
-        f"{peer.capitalize()} has replied on agent-mailbox task {task_id}.\n\n"
-        f"Discovery marker: AGENT_MAILBOX_TASK_ID={task_id}\n\n"
+        opening
+        + f"Discovery marker: AGENT_MAILBOX_TASK_ID={task_id}\n\n"
         "Read the latest reply in the chat monitor pane.\n\n"
         f"To respond, write your reply to: {write_path}\n\n"
         "Required frontmatter (exact field names):\n"
@@ -267,10 +272,15 @@ def run_once(*, root: Path, task_id: str, wezterm_exe: Path) -> str:
             return "panes_lost"
         first_turn = int(room["round"]) == 0
         peer = _peer_for_agent(conn, task_id, turn)
+        latest = conn.execute(
+            "SELECT kind, from_agent FROM messages WHERE id=?", (last_message_id,)
+        ).fetchone() if last_message_id else None
+        latest_kind = latest["kind"] if latest else "outbox"
+        latest_from = latest["from_agent"] if latest else ""
         text = (
             first_turn_text(agent=turn, peer=peer, task_id=task_id, root=root)
             if first_turn
-            else doorbell_text(agent=turn, peer=peer, task_id=task_id, root=root)
+            else doorbell_text(agent=turn, peer=peer, task_id=task_id, root=root, latest_kind=latest_kind, latest_from=latest_from)
         )
         if not send_doorbell(wezterm_exe=wezterm_exe, pane_id=int(pane["pane_id"]), text=text):
             _pause_relay(conn, task_id, f"doorbell_failed:{turn}")
